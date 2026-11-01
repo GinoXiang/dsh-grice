@@ -13,6 +13,8 @@ const React = {
   useCallback: (callback) => callback,
   useMemo: (factory) => factory(),
   useRef: (initial) => ({ current: initial }),
+  useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(),
+  Fragment: function Fragment() {},
 }
 
 /** The page facade the classic bundle registers itself with. */
@@ -44,35 +46,35 @@ globalThis.document = {
     created.push(element)
     return element
   },
+  addEventListener() {},
+  removeEventListener() {},
 }
+globalThis.setInterval = () => 1
+globalThis.clearInterval = () => {}
 
 await import('../client.js')
 
-function fakeSlots() {
-  const registrations = []
+function fakeCtx() {
+  const registered = []
+  const injected = []
+  const effects = []
   return {
-    registrations,
+    registered,
+    injected,
+    effects,
     slots: {
       inject(key, callback) {
-        assert.equal(key, 'conversation.input.left')
+        injected.push(key)
         return callback()
       },
       register(options, component) {
-        registrations.push({ options, component })
+        registered.push({ options, component })
         return () => {
-          const index = registrations.findIndex((entry) => entry.options === options)
-          if (index !== -1) registrations.splice(index, 1)
+          const index = registered.findIndex((entry) => entry.options === options)
+          if (index !== -1) registered.splice(index, 1)
         }
       },
     },
-  }
-}
-
-function fakeCtx(slots) {
-  const effects = []
-  return {
-    effects,
-    slots,
     effect(factory) {
       const disposer = factory()
       if (typeof disposer === 'function') effects.push(disposer)
@@ -83,15 +85,15 @@ function fakeCtx(slots) {
       return {
         getSnapshot: () => ({ active: 'zh' }),
         subscribe: () => () => {},
+        register: () => () => {},
       }
     },
   }
 }
 
-test('the bundle registers one composer switch under a stable id', () => {
+test('the bundle registers the switch, both dropdowns, and the settings section', () => {
   assert.ok(loaded, 'the bundle registered with the module loader')
   assert.equal(loaded.id, 'dsh-grice')
-  assert.equal(typeof loaded.factory, 'function')
 
   const plugin = loaded.factory((specifier) => {
     assert.equal(specifier, 'react')
@@ -101,30 +103,40 @@ test('the bundle registers one composer switch under a stable id', () => {
   assert.deepEqual(plugin.inject, ['slots'])
   assert.equal(typeof plugin.apply, 'function')
 
-  const { slots, registrations } = fakeSlots()
-  const ctx = fakeCtx(slots)
+  const ctx = fakeCtx()
   plugin.apply(ctx)
 
-  assert.equal(registrations.length, 1)
-  const [{ options, component }] = registrations
-  assert.equal(options.name, 'conversation.input.left')
-  assert.equal(options.id, 'dsh-grice')
-  assert.equal(options.order, 120)
-  assert.equal(typeof component, 'function')
+  assert.deepEqual(ctx.injected, [
+    'conversation.input.left',
+    'conversation.input.left',
+    'conversation.input.left',
+    'settings.section',
+  ])
+  assert.equal(ctx.registered.length, 4)
 
-  // The style element goes in and its disposer removes it on unload.
+  const byId = (id) => ctx.registered.find((entry) => entry.options.id === id).options
+  const settings = ctx.registered.find((entry) => entry.options.name === 'settings.section').options
+  assert.equal(byId('dsh-grice').name, 'conversation.input.left')
+  assert.equal(byId('dsh-grice').order, 120)
+  assert.equal(byId('dsh-grice-tone').name, 'conversation.input.left')
+  assert.equal(byId('dsh-grice-tone').order, 130)
+  assert.equal(byId('dsh-grice-output').name, 'conversation.input.left')
+  assert.equal(byId('dsh-grice-output').order, 140)
+  assert.equal(settings.name, 'settings.section')
+  assert.equal(typeof settings.label, 'function')
+
+  // Each registration has a component function; the style element is removed
+  // when the plugin unloads.
+  for (const entry of ctx.registered) assert.ok(typeof entry.component === 'function')
   assert.equal(created.length, 1)
   for (const disposer of ctx.effects) disposer()
   assert.equal(created[0].removed, true)
-  assert.ok(document.head)
 })
 
-test('the switch reports the load state and hides without a session id', () => {
-  const plugin = loaded.factory(() => React)
-  const { slots } = fakeSlots()
-  plugin.apply(fakeCtx(slots))
-
-  // The bundle talks to its own loopback routes only.
-  const source = plugin.apply.toString()
-  assert.match(source, /conversation\.input\.left/)
+test('the bundle talks only to its own loopback routes', async () => {
+  const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('../client.js', import.meta.url), 'utf8'))
+  for (const route of ['/state', '/toggle', '/select', '/presets', '/presets/save', '/presets/delete', '/presets/reset']) {
+    assert.match(source, new RegExp(`'${route}'`))
+  }
+  assert.doesNotMatch(source, /https?:\/\//)
 })

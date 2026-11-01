@@ -1,13 +1,13 @@
 // dsh-grice - browser half.
 //
-// A classic client bundle (client-modules protocol): register a factory with
-// window.__ModuleLoader__.load and return apply(). The board renders one
-// switch in the composer's left tool row, next to the permission chip; the
-// switch owns no state, it reads and flips the Host's per-Session switch
-// through the plugin's own loopback routes.
+// Classic client bundle (client-modules protocol): register a factory with
+// window.__ModuleLoader__.load and return apply(). The composer carries three
+// independent controls — the Grice master switch, a tone preset dropdown, and
+// an output preset dropdown — and the settings page manages the preset library.
 //
-// React and the shared runtime come from the page's frozen module table; no
-// another plugin's component is imported.
+// The Host is the single writer: every control reads through `/dsh-grice/state`
+// (shared, polled per Session) and submits through `/dsh-grice/*`. A selection
+// made in either dropdown auto-enables the master switch, by Host rule.
 window.__ModuleLoader__.load({
   id: 'dsh-grice',
   factory: (require) => {
@@ -16,24 +16,112 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-grice'
     const ROUTE = '/dsh-grice'
-    const VERSION = '0.1.0'
-    /** How often the idle board re-reads the Host switch (cheap local POST). */
+    const VERSION = '0.2.0'
+    /** How often an idle control re-reads the Host state (cheap local POST). */
     const POLL_MS = 4000
 
     const zh = {
-      label: '格赖斯',
-      aria: '格赖斯模式开关',
-      titleOn: '格赖斯模式：已开启。助手会严格遵守数量、质量、关系、方式四条语用准则，只给必要信息。点击关闭。',
-      titleOff: '格赖斯模式：已关闭。点击开启：助手将严格遵守格赖斯语用准则，进行高效沟通。',
-      failed: '切换失败，请重试',
+      panel: '格赖斯',
+      grice: '格赖斯',
+      griceAria: '格赖斯模式开关',
+      griceOn: '格赖斯模式：已开启。点击关闭。',
+      griceOff: '格赖斯模式：已关闭。点击开启。',
+      tone: '基调',
+      toneAria: '沟通与思考基调',
+      toneHint: '选择沟通/思考基调；选中后自动开启格赖斯模式。',
+      toneDefault: '格赖斯·高效',
+      output: '产出',
+      outputAria: '产出形态',
+      outputHint: '选择产出形态；选中后自动开启格赖斯模式。',
+      outputNone: '无额外要求',
+      more: '更多…',
+      collapse: '收起',
+      manageHint: '在「设置 → 格赖斯」里管理预设',
+      loading: '加载中…',
+      unavailable: '不可用',
+      failed: '操作失败',
+      settingsTitle: '格赖斯模式',
+      settingsIntro: '管理沟通基调与产出形态预设。两个下拉框都从这里取数据；单条提示词上限 2000 字符。',
+      settingsTone: '沟通基调',
+      settingsOutput: '产出形态',
+      builtin: '内置',
+      pinned: '置顶',
+      pin: '置顶',
+      unpin: '取消置顶',
+      add: '新增预设',
+      addTone: '新增基调',
+      addOutput: '新增产出',
+      editPreset: '编辑预设',
+      newPreset: '新建预设',
+      name: '名称',
+      namePlaceholder: '例如：代码审查',
+      prompt: '提示词正文（会追加到当前会话的系统提示词）',
+      promptPlaceholder: '写清楚要求：交付物、结构、语气、不要做什么…',
+      pinnedLabel: '在下拉框前 5 条中展示',
+      chars: (count) => `${count} / 2000`,
+      save: '保存',
+      cancel: '取消',
+      remove: '删除',
+      edit: '编辑',
+      reset: '恢复默认预设',
+      resetConfirm: '恢复默认预设？自定义预设会被删除。',
+      removeConfirm: '删除这个预设？当前正在使用它的会话会自动回退。',
+      empty: '还没有预设，点「新增」创建一个。',
+      saved: '已保存',
+      builtinNote: '内置预设也可以修改或删除，恢复默认会还原。',
+      close: '关闭',
     }
 
     const en = {
-      label: 'Grice',
-      aria: 'Grice mode switch',
-      titleOn: 'Grice mode: on. Replies obey the maxims of quantity, quality, relation and manner. Click to turn off.',
-      titleOff: 'Grice mode: off. Click to make replies obey Grice\'s maxims for efficient communication.',
-      failed: 'Could not switch, retry',
+      panel: 'Grice',
+      grice: 'Grice',
+      griceAria: 'Grice mode switch',
+      griceOn: 'Grice mode: on. Click to turn off.',
+      griceOff: 'Grice mode: off. Click to turn on.',
+      tone: 'Tone',
+      toneAria: 'Communication and thinking tone',
+      toneHint: 'Pick a tone; selecting one turns Grice mode on.',
+      toneDefault: 'Grice · efficient',
+      output: 'Output',
+      outputAria: 'Output form',
+      outputHint: 'Pick an output form; selecting one turns Grice mode on.',
+      outputNone: 'No extra requirements',
+      more: 'More…',
+      collapse: 'Show less',
+      manageHint: 'Manage presets in Settings → Grice',
+      loading: 'Loading…',
+      unavailable: 'Unavailable',
+      failed: 'Failed',
+      settingsTitle: 'Grice mode',
+      settingsIntro: 'Manage communication tone and output-form presets. Both composer dropdowns read from here; each prompt is capped at 2000 characters.',
+      settingsTone: 'Tone presets',
+      settingsOutput: 'Output presets',
+      builtin: 'built-in',
+      pinned: 'pinned',
+      pin: 'Pin',
+      unpin: 'Unpin',
+      add: 'New preset',
+      addTone: 'New tone',
+      addOutput: 'New output',
+      editPreset: 'Edit preset',
+      newPreset: 'New preset',
+      name: 'Name',
+      namePlaceholder: 'e.g. Code review',
+      prompt: 'Prompt text (appended to the system prompt of a session)',
+      promptPlaceholder: 'State the deliverable, structure, tone, and what not to do…',
+      pinnedLabel: 'Show in the first 5 rows of the dropdown',
+      chars: (count) => `${count} / 2000`,
+      save: 'Save',
+      cancel: 'Cancel',
+      remove: 'Delete',
+      edit: 'Edit',
+      reset: 'Restore default presets',
+      resetConfirm: 'Restore default presets? Custom presets will be deleted.',
+      removeConfirm: 'Delete this preset? Sessions using it fall back automatically.',
+      empty: 'No presets yet — click New to create one.',
+      saved: 'Saved',
+      builtinNote: 'Built-in presets can be edited or deleted; Restore defaults brings them back.',
+      close: 'Close',
     }
 
     const CSS = [
@@ -46,6 +134,50 @@ window.__ModuleLoader__.load({
       '.dshgrice-icon{display:inline-flex;flex:none}',
       '.dshgrice-icon svg{width:14px;height:14px}',
       '.dshgrice-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dshgrice-select{max-width:180px}',
+      '.dshgrice-select .dshgrice-label{max-width:132px}',
+      '.dshgrice-chevron{display:inline-flex;flex:none;opacity:.65;transition:transform .12s}',
+      '.dshgrice-chevron svg{width:12px;height:12px}',
+      '.dshgrice-menu{position:fixed;z-index:2147483000;min-width:208px;max-width:320px;padding:4px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,#fff);box-shadow:0 10px 28px rgba(0,0,0,.2)}',
+      '.dshgrice-menu-list{max-height:320px;overflow:auto}',
+      '.dshgrice-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
+      '.dshgrice-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshgrice-menu-item[data-selected="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));font-weight:500}',
+      '.dshgrice-menu-check{flex:none;width:14px;text-align:center;opacity:.9}',
+      '.dshgrice-menu-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshgrice-menu-more{color:var(--dsw-alias-label-secondary)}',
+      '.dshgrice-menu-sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l2,rgba(128,128,128,.25))}',
+      '.dshgrice-menu-hint{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      '.dshgrice-settings{display:flex;flex-direction:column;gap:14px;max-width:760px;padding:4px 2px 40px;color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.6}',
+      '.dshgrice-settings-title{margin:0;font-size:18px;font-weight:600;line-height:26px}',
+      '.dshgrice-settings-intro{margin:0;color:var(--dsw-alias-label-secondary);font-size:13px}',
+      '.dshgrice-tabs{display:flex;gap:6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25))}',
+      '.dshgrice-tab{appearance:none;border:none;border-bottom:2px solid transparent;background:transparent;padding:7px 12px;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}',
+      '.dshgrice-tab[data-on="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));border-bottom-color:var(--dsw-alias-state-business-primary,#4d6bfe);font-weight:600}',
+      '.dshgrice-rows{display:flex;flex-direction:column;gap:6px}',
+      '.dshgrice-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));border-radius:var(--dsw-radius-md,8px)}',
+      '.dshgrice-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
+      '.dshgrice-row-name{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}',
+      '.dshgrice-row-meta{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dshgrice-badge{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px}',
+      '.dshgrice-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}',
+      '.dshgrice-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dshgrice-btn[data-primary="1"]{border-color:transparent;background:var(--dsw-alias-state-business-primary,#4d6bfe);color:#fff}',
+      '.dshgrice-btn[data-danger="1"]:hover{color:var(--dsw-alias-state-error-primary,#e5484d)}',
+      '.dshgrice-btn:disabled{opacity:.5;cursor:default}',
+      '.dshgrice-form{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,#fafafa)}',
+      '.dshgrice-form-title{font-size:13px;font-weight:600}',
+      '.dshgrice-field{display:flex;flex-direction:column;gap:5px}',
+      '.dshgrice-field-label{color:var(--dsw-alias-label-secondary);font-size:12px}',
+      '.dshgrice-input,.dshgrice-textarea{box-sizing:border-box;width:100%;padding:7px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.4));border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary);font-size:13px;font-family:inherit}',
+      '.dshgrice-textarea{min-height:150px;resize:vertical;line-height:1.55}',
+      '.dshgrice-form-foot{display:flex;align-items:center;gap:8px}',
+      '.dshgrice-form-foot .dshgrice-spacer{flex:1}',
+      '.dshgrice-hint{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dshgrice-notice{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-secondary));font-size:12px}',
+      '.dshgrice-error{color:var(--dsw-alias-state-error-primary,#e5484d);font-size:12px}',
+      '.dshgrice-empty{padding:18px 4px;color:var(--dsw-alias-label-tertiary);font-size:13px}',
+      '.dshgrice-check{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:12px}',
     ].join('')
 
     function isSessionId(value) {
@@ -90,6 +222,183 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    /** A small "tone / output" artwork whose shape differs from the Grice glyph. */
+    function PresetGlyph({ kind }) {
+      if (kind === 'tone') {
+        return h('svg', {
+          viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: 'currentColor',
+          strokeWidth: 1.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', focusable: 'false',
+        }, [
+          h('path', { key: 'a', d: 'M3 11.2V5.4h5.1v5.8H6.2L4.2 13v-1.8H3Z' }),
+          h('path', { key: 'b', d: 'M9.6 9.2h2.9c.5 0 .9-.4.9-.9V3.6c0-.5-.4-.9-.9-.9H7.4' }),
+        ])
+      }
+      return h('svg', {
+        viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', focusable: 'false',
+      }, [
+        h('path', { key: 'page', d: 'M4 2.2h5.6L12.8 5.4v8.4H4V2.2Z' }),
+        h('path', { key: 'fold', d: 'M9.4 2.4v3.2h3.2' }),
+        h('path', { key: 'line', d: 'M6 9.4h4.4M6 11.6h3.2' }),
+      ])
+    }
+
+    function ChevronGlyph() {
+      return h('svg', {
+        viewBox: '0 0 16 16', width: 12, height: 12, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', focusable: 'false',
+      }, h('path', { d: 'M4 6.2 8 10l4-3.8' }))
+    }
+
+    function CheckGlyph() {
+      return h('svg', {
+        viewBox: '0 0 16 16', width: 12, height: 12, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', focusable: 'false',
+      }, h('path', { d: 'M3.4 8.4 6.4 11.2 12.6 4.8' }))
+    }
+
+    /** Per-Session switch surface shared by every composer control. */
+    function createSessionStore() {
+      const records = new Map()
+
+      function recordOf(sessionId) {
+        let record = records.get(sessionId)
+        if (record === undefined) {
+          record = {
+            snapshot: { status: 'loading', enabled: false, tone: null, output: null },
+            listeners: new Set(),
+            timer: null,
+            loaded: false,
+            pending: null,
+          }
+          records.set(sessionId, record)
+        }
+        return record
+      }
+
+      function publish(record, patch) {
+        record.snapshot = { ...record.snapshot, ...patch }
+        for (const listener of record.listeners) listener()
+      }
+
+      function read(sessionId, hello) {
+        const record = recordOf(sessionId)
+        if (record.pending !== null) return record.pending
+        if (record.loaded && hello !== true) return Promise.resolve(record.snapshot)
+        record.pending = post('/state', hello === true
+          ? { sessionId, hello: true, version: VERSION }
+          : { sessionId }).then((data) => {
+          record.pending = null
+          record.loaded = true
+          publish(record, {
+            status: 'ready',
+            enabled: data.enabled === true,
+            tone: typeof data.tone === 'string' ? data.tone : null,
+            output: typeof data.output === 'string' ? data.output : null,
+          })
+          return record.snapshot
+        }).catch((error) => {
+          record.pending = null
+          publish(record, { status: 'error', error: String((error && error.message) || error) })
+          return record.snapshot
+        })
+        return record.pending
+      }
+
+      return {
+        snapshotOf(sessionId) {
+          return recordOf(sessionId).snapshot
+        },
+        subscribe(sessionId, listener) {
+          const record = recordOf(sessionId)
+          record.listeners.add(listener)
+          if (record.timer === null) {
+            record.timer = setInterval(() => {
+              if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+              read(sessionId, false)
+            }, POLL_MS)
+          }
+          return () => {
+            record.listeners.delete(listener)
+            if (record.listeners.size === 0 && record.timer !== null) {
+              clearInterval(record.timer)
+              record.timer = null
+            }
+          }
+        },
+        apply(sessionId, payload) {
+          const record = recordOf(sessionId)
+          publish(record, {
+            status: 'ready',
+            enabled: payload.enabled === true,
+            tone: typeof payload.tone === 'string' ? payload.tone : null,
+            output: typeof payload.output === 'string' ? payload.output : null,
+          })
+        },
+        read,
+      }
+    }
+
+    /** The global preset library, shared by both dropdowns and the settings page. */
+    function createPresetStore() {
+      let snapshot = { status: 'loading', tones: [], outputs: [], error: null }
+      const listeners = new Set()
+      let pending = null
+
+      function publish(next) {
+        snapshot = { ...snapshot, ...next }
+        for (const listener of listeners) listener()
+      }
+
+      function load(force) {
+        if (pending !== null) return pending
+        if (snapshot.status === 'ready' && force !== true) return Promise.resolve(snapshot)
+        pending = post('/presets', {}).then((data) => {
+          pending = null
+          const presets = data.presets ?? {}
+          publish({
+            status: 'ready',
+            tones: Array.isArray(presets.tones) ? presets.tones : [],
+            outputs: Array.isArray(presets.outputs) ? presets.outputs : [],
+            error: null,
+          })
+          return snapshot
+        }).catch((error) => {
+          pending = null
+          publish({ status: 'error', error: String((error && error.message) || error) })
+          return snapshot
+        })
+        return pending
+      }
+
+      return {
+        getSnapshot: () => snapshot,
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        load,
+        replace(library) {
+          const presets = library ?? {}
+          publish({
+            status: 'ready',
+            tones: Array.isArray(presets.tones) ? presets.tones : [],
+            outputs: Array.isArray(presets.outputs) ? presets.outputs : [],
+            error: null,
+          })
+        },
+        find(kind, id) {
+          if (typeof id !== 'string' || id === '') return undefined
+          return snapshot[kind === 'tone' ? 'tones' : 'outputs'].find((preset) => preset.id === id)
+        },
+        nameOf(kind, id) {
+          const preset = this.find(kind, id)
+          if (preset !== undefined) return preset.name
+          return kind === 'tone' ? zh.toneDefault : zh.outputNone
+        },
+      }
+    }
+
     const inject = ['slots']
 
     function apply(ctx) {
@@ -106,6 +415,15 @@ window.__ModuleLoader__.load({
         locale = ctx.get('locale')
       } catch {
         locale = undefined
+      }
+      if (locale && typeof locale.register === 'function') {
+        ctx.effect(() => {
+          try {
+            return locale.register(NS, { zh, en })
+          } catch {
+            return () => {}
+          }
+        }, 'dsh-grice: dictionaries')
       }
 
       function dictionary() {
@@ -128,44 +446,43 @@ window.__ModuleLoader__.load({
         return React.useMemo(() => dictionary(), [revision])
       }
 
-      /** The transport-backed switch state: Host is the only writer. */
-      function useGriceSwitch(sessionId) {
-        const [snapshot, setSnapshot] = React.useState({ status: 'loading', enabled: false })
+      const sessionStore = createSessionStore()
+      const presetStore = createPresetStore()
+
+      function useSession(sessionId) {
+        const subscribe = React.useCallback(
+          (listener) => (isSessionId(sessionId) ? sessionStore.subscribe(sessionId, listener) : () => {}),
+          [sessionId],
+        )
+        const getSnapshot = React.useCallback(
+          () => (isSessionId(sessionId)
+            ? sessionStore.snapshotOf(sessionId)
+            : { status: 'ready', enabled: false, tone: null, output: null }),
+          [sessionId],
+        )
+        const snapshot = React.useSyncExternalStore(subscribe, getSnapshot)
         React.useEffect(() => {
-          if (!isSessionId(sessionId)) {
-            setSnapshot({ status: 'ready', enabled: false })
-            return undefined
-          }
-          let live = true
-          const read = (hello) => {
-            const payload = hello
-              ? { sessionId, hello: true, version: VERSION }
-              : { sessionId }
-            post('/state', payload).then((data) => {
-              if (!live) return
-              setSnapshot({ status: 'ready', enabled: data.enabled === true })
-            }).catch(() => {
-              if (!live) return
-              setSnapshot((current) => (current.status === 'loading' ? { status: 'error', enabled: false } : current))
-            })
-          }
-          read(true)
-          const timer = setInterval(() => {
-            if (typeof document === 'undefined' || document.visibilityState === 'hidden') return
-            read(false)
-          }, POLL_MS)
-          return () => {
-            live = false
-            clearInterval(timer)
-          }
+          if (isSessionId(sessionId)) sessionStore.read(sessionId, true)
         }, [sessionId])
-        return [snapshot, setSnapshot]
+        return snapshot
       }
 
+      function usePresets() {
+        const snapshot = React.useSyncExternalStore(
+          (listener) => presetStore.subscribe(listener),
+          () => presetStore.getSnapshot(),
+        )
+        React.useEffect(() => {
+          presetStore.load(false)
+        }, [])
+        return snapshot
+      }
+
+      /** One composer control: the master switch or one preset dropdown. */
       function GriceSwitch(props) {
         const t = useDictionary()
         const sessionId = props.sessionId
-        const [snapshot, setSnapshot] = useGriceSwitch(sessionId === undefined ? undefined : sessionId)
+        const snapshot = useSession(sessionId)
         const [busy, setBusy] = React.useState(false)
         const [failure, setFailure] = React.useState(null)
 
@@ -177,40 +494,372 @@ window.__ModuleLoader__.load({
 
         const onClick = React.useCallback(() => {
           if (busy || !isSessionId(sessionId)) return
-          const wanted = !snapshot.enabled
           setBusy(true)
           setFailure(null)
-          // The Host is the single writer; show the intended state at once and
-          // let the answer settle it so a failed write cannot leave a lie.
-          setSnapshot({ status: 'ready', enabled: wanted })
           post('/toggle', { sessionId }).then((data) => {
-            setSnapshot({ status: 'ready', enabled: data.enabled === true })
+            sessionStore.apply(sessionId, data)
           }).catch((error) => {
-            setSnapshot({ status: 'ready', enabled: !wanted })
             setFailure(String((error && error.message) || error))
           }).then(() => {
             setBusy(false)
           })
-        }, [busy, sessionId, snapshot.enabled])
+        }, [busy, sessionId])
 
         if (!isSessionId(sessionId)) return null
 
+        const enabled = snapshot.enabled === true
         const title = failure === null
-          ? (snapshot.enabled ? t.titleOn : t.titleOff)
+          ? (enabled ? t.griceOn : t.griceOff)
           : `${t.failed}（${failure}）`
         return h('button', {
           type: 'button',
           className: 'dshgrice',
-          'data-active': snapshot.enabled ? '1' : undefined,
+          'data-active': enabled ? '1' : undefined,
           'data-status': snapshot.status,
-          'aria-label': t.aria,
-          'aria-pressed': snapshot.enabled ? 'true' : 'false',
+          'aria-label': t.griceAria,
+          'aria-pressed': enabled ? 'true' : 'false',
           title,
           disabled: busy,
           onClick,
         }, [
           h('span', { key: 'icon', className: 'dshgrice-icon' }, h(GriceGlyph)),
-          h('span', { key: 'label', className: 'dshgrice-label' }, t.label),
+          h('span', { key: 'label', className: 'dshgrice-label' }, t.grice),
+        ])
+      }
+
+      function PresetSelect(props) {
+        const t = useDictionary()
+        const kind = props.kind
+        const sessionId = props.sessionId
+        const snapshot = useSession(sessionId)
+        const presets = usePresets()
+        const [open, setOpen] = React.useState(false)
+        const [expanded, setExpanded] = React.useState(false)
+        const [position, setPosition] = React.useState(null)
+        const [failure, setFailure] = React.useState(null)
+        const anchorRef = React.useRef(null)
+
+        if (!isSessionId(sessionId)) return null
+
+        const library = kind === 'tone' ? presets.tones : presets.outputs
+        const selectedId = kind === 'tone'
+          ? (snapshot.tone ?? 'grice')
+          : snapshot.output
+        const selected = library.find((preset) => preset.id === selectedId)
+        const label = selected !== undefined
+          ? selected.name
+          : (kind === 'tone' ? t.toneDefault : t.outputNone)
+
+        const close = () => {
+          setOpen(false)
+          setExpanded(false)
+        }
+
+        const openMenu = () => {
+          const anchor = anchorRef.current
+          if (anchor === null) return
+          const rect = anchor.getBoundingClientRect()
+          const estimated = Math.min(expanded ? 380 : 240, Math.max(160, (expanded ? library.length : 6) * 34 + 24))
+          const below = rect.bottom + 6 + estimated < (typeof window === 'undefined' ? 800 : window.innerHeight)
+          setPosition(below
+            ? { left: Math.max(8, rect.left), top: rect.bottom + 6 }
+            : { left: Math.max(8, rect.left), bottom: (typeof window === 'undefined' ? 0 : window.innerHeight) - rect.top + 6 })
+          setOpen(true)
+        }
+
+        React.useEffect(() => {
+          if (!open) return undefined
+          const onPointer = (event) => {
+            const anchor = anchorRef.current
+            if (anchor !== null && anchor.contains(event.target)) return
+            if (event.target && typeof event.target.closest === 'function' && event.target.closest('.dshgrice-menu')) return
+            close()
+          }
+          const onKey = (event) => {
+            if (event.key === 'Escape') close()
+          }
+          document.addEventListener('mousedown', onPointer)
+          document.addEventListener('keydown', onKey)
+          return () => {
+            document.removeEventListener('mousedown', onPointer)
+            document.removeEventListener('keydown', onKey)
+          }
+        }, [open])
+
+        React.useEffect(() => {
+          if (failure === null) return undefined
+          const timer = setTimeout(() => setFailure(null), 3000)
+          return () => clearTimeout(timer)
+        }, [failure])
+
+        const choose = React.useCallback((id) => {
+          if (!isSessionId(sessionId)) return
+          const wanted = id === selectedId ? selectedId : id
+          post('/select', { sessionId, kind, id: wanted }).then((data) => {
+            sessionStore.apply(sessionId, data)
+            close()
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          })
+        }, [kind, selectedId, sessionId])
+
+        const pinned = library.filter((preset) => preset.pinned).slice(0, 5)
+        const hidden = library.filter((preset) => !pinned.includes(preset))
+        const rows = expanded ? library : pinned
+        const clearRow = kind === 'output' && !expanded && snapshot.output !== null
+
+        const row = (preset) => h('button', {
+          key: preset.id,
+          type: 'button',
+          className: 'dshgrice-menu-item',
+          'data-selected': preset.id === selectedId ? '1' : undefined,
+          onClick: () => choose(preset.id),
+        }, [
+          h('span', { key: 'check', className: 'dshgrice-menu-check' }, preset.id === selectedId ? h(CheckGlyph) : null),
+          h('span', { key: 'text', className: 'dshgrice-menu-text' }, preset.name),
+        ])
+
+        const menu = open
+          ? h('div', {
+            className: 'dshgrice-menu',
+            style: position === null ? undefined : position,
+            role: 'menu',
+          }, [
+            clearRow ? h('button', {
+              key: 'clear',
+              type: 'button',
+              className: 'dshgrice-menu-item',
+              'data-selected': snapshot.output === null ? '1' : undefined,
+              onClick: () => choose(null),
+            }, [
+              h('span', { key: 'check', className: 'dshgrice-menu-check' }, snapshot.output === null ? h(CheckGlyph) : null),
+              h('span', { key: 'text', className: 'dshgrice-menu-text' }, t.outputNone),
+            ]) : null,
+            h('div', { key: 'list', className: 'dshgrice-menu-list' }, rows.map(row)),
+            !expanded && hidden.length > 0 ? h('div', { key: 'sep', className: 'dshgrice-menu-sep' }) : null,
+            !expanded && hidden.length > 0
+              ? h('button', {
+                key: 'more',
+                type: 'button',
+                className: 'dshgrice-menu-item dshgrice-menu-more',
+                onClick: () => {
+                  setExpanded(true)
+                  const anchor = anchorRef.current
+                  if (anchor !== null) {
+                    const rect = anchor.getBoundingClientRect()
+                    const estimated = Math.min(380, Math.max(160, library.length * 34 + 24))
+                    const below = rect.bottom + 6 + estimated < window.innerHeight
+                    setPosition(below
+                      ? { left: Math.max(8, rect.left), top: rect.bottom + 6 }
+                      : { left: Math.max(8, rect.left), bottom: window.innerHeight - rect.top + 6 })
+                  }
+                },
+              }, [h('span', { key: 'check', className: 'dshgrice-menu-check' }), h('span', { key: 'text', className: 'dshgrice-menu-text' }, t.more)])
+              : null,
+            h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
+          ])
+          : null
+
+        return h(React.Fragment, null, [
+          h('button', {
+            key: 'trigger',
+            ref: anchorRef,
+            type: 'button',
+            className: 'dshgrice dshgrice-select',
+            'data-active': snapshot.enabled ? '1' : undefined,
+            'data-open': open ? '1' : undefined,
+            title: failure === null ? (kind === 'tone' ? t.toneHint : t.outputHint) : `${t.failed}（${failure}）`,
+            'aria-label': kind === 'tone' ? t.toneAria : t.outputAria,
+            'aria-haspopup': 'menu',
+            'aria-expanded': open ? 'true' : 'false',
+            onClick: () => (open ? close() : openMenu()),
+          }, [
+            h('span', { key: 'icon', className: 'dshgrice-icon' }, h(PresetGlyph, { kind })),
+            h('span', { key: 'label', className: 'dshgrice-label' }, label),
+            h('span', { key: 'chevron', className: 'dshgrice-chevron' }, h(ChevronGlyph)),
+          ]),
+          menu,
+        ])
+      }
+
+      function SettingsPanel() {
+        const t = useDictionary()
+        const presets = usePresets()
+        const [tab, setTab] = React.useState('tone')
+        const [editing, setEditing] = React.useState(null)
+        const [notice, setNotice] = React.useState(null)
+        const [failure, setFailure] = React.useState(null)
+        const [busy, setBusy] = React.useState(false)
+
+        const library = tab === 'tone' ? presets.tones : presets.outputs
+
+        React.useEffect(() => {
+          presetStore.load(false)
+        }, [])
+
+        React.useEffect(() => {
+          setEditing(null)
+          setNotice(null)
+          setFailure(null)
+        }, [tab])
+
+        React.useEffect(() => {
+          if (notice === null) return undefined
+          const timer = setTimeout(() => setNotice(null), 2500)
+          return () => clearTimeout(timer)
+        }, [notice])
+
+        const startAdd = () => {
+          setNotice(null)
+          setFailure(null)
+          setEditing({ id: undefined, name: '', prompt: '', pinned: false })
+        }
+
+        const startEdit = (preset) => {
+          setNotice(null)
+          setFailure(null)
+          setEditing({ id: preset.id, name: preset.name, prompt: preset.prompt, pinned: preset.pinned === true })
+        }
+
+        const save = () => {
+          if (editing === null || busy) return
+          setBusy(true)
+          setFailure(null)
+          post('/presets/save', {
+            kind: tab,
+            preset: {
+              id: editing.id,
+              name: editing.name,
+              prompt: editing.prompt,
+              pinned: editing.pinned,
+            },
+          }).then((data) => {
+            presetStore.replace(data.list)
+            setEditing(null)
+            setNotice(t.saved)
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          }).then(() => {
+            setBusy(false)
+          })
+        }
+
+        const remove = (preset) => {
+          if (typeof window === 'undefined' || !window.confirm(t.removeConfirm)) return
+          setBusy(true)
+          setFailure(null)
+          post('/presets/delete', { kind: tab, id: preset.id }).then((data) => {
+            presetStore.replace(data.list)
+            if (editing !== null && editing.id === preset.id) setEditing(null)
+            setNotice(t.saved)
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          }).then(() => {
+            setBusy(false)
+          })
+        }
+
+        const reset = () => {
+          if (typeof window === 'undefined' || !window.confirm(t.resetConfirm)) return
+          setBusy(true)
+          setFailure(null)
+          post('/presets/reset', { kind: tab }).then((data) => {
+            presetStore.replace(data.list)
+            setNotice(t.saved)
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          }).then(() => {
+            setBusy(false)
+          })
+        }
+
+        const rows = library.map((preset) => h('div', { key: preset.id, className: 'dshgrice-row' }, [
+          h('div', { key: 'main', className: 'dshgrice-row-main' }, [
+            h('div', { key: 'name', className: 'dshgrice-row-name' }, [
+              h('span', { key: 'text' }, preset.name),
+              preset.pinned ? h('span', { key: 'pin', className: 'dshgrice-badge' }, t.pinned) : null,
+              preset.builtin ? h('span', { key: 'builtin', className: 'dshgrice-badge' }, t.builtin) : null,
+            ]),
+            h('div', { key: 'meta', className: 'dshgrice-row-meta' }, t.chars((preset.prompt || '').length)),
+          ]),
+          h('button', {
+            key: 'edit', type: 'button', className: 'dshgrice-btn', disabled: busy,
+            onClick: () => startEdit(preset),
+          }, t.edit),
+          h('button', {
+            key: 'delete', type: 'button', className: 'dshgrice-btn', 'data-danger': '1', disabled: busy,
+            onClick: () => remove(preset),
+          }, t.remove),
+        ]))
+
+        const form = editing === null ? null : h('div', { className: 'dshgrice-form' }, [
+          h('div', { key: 'title', className: 'dshgrice-form-title' }, editing.id === undefined ? t.newPreset : t.editPreset),
+          h('label', { key: 'name', className: 'dshgrice-field' }, [
+            h('span', { key: 'label', className: 'dshgrice-field-label' }, t.name),
+            h('input', {
+              key: 'input', className: 'dshgrice-input', value: editing.name, placeholder: t.namePlaceholder,
+              onChange: (event) => setEditing({ ...editing, name: event.target.value }),
+            }),
+          ]),
+          h('label', { key: 'prompt', className: 'dshgrice-field' }, [
+            h('span', { key: 'label', className: 'dshgrice-field-label' }, t.prompt),
+            h('textarea', {
+              key: 'textarea', className: 'dshgrice-textarea', value: editing.prompt,
+              placeholder: t.promptPlaceholder,
+              onChange: (event) => setEditing({ ...editing, prompt: event.target.value.slice(0, 2000) }),
+            }),
+          ]),
+          h('div', { key: 'pinned', className: 'dshgrice-check' }, h('input', {
+            type: 'checkbox', checked: editing.pinned === true,
+            onChange: (event) => setEditing({ ...editing, pinned: event.target.checked }),
+          }), h('span', null, t.pinnedLabel)),
+          h('div', { key: 'foot', className: 'dshgrice-form-foot' }, [
+            failure === null ? null : h('span', { key: 'error', className: 'dshgrice-error' }, failure),
+            h('span', { key: 'spacer', className: 'dshgrice-spacer' }),
+            h('span', { key: 'chars', className: 'dshgrice-hint' }, t.chars((editing.prompt || '').length)),
+            h('button', {
+              key: 'cancel', type: 'button', className: 'dshgrice-btn', disabled: busy,
+              onClick: () => setEditing(null),
+            }, t.cancel),
+            h('button', {
+              key: 'save', type: 'button', className: 'dshgrice-btn', 'data-primary': '1', disabled: busy,
+              onClick: save,
+            }, t.save),
+          ]),
+        ])
+
+        return h('div', { className: 'dshgrice-settings' }, [
+          h('h1', { key: 'title', className: 'dshgrice-settings-title' }, t.settingsTitle),
+          h('p', { key: 'intro', className: 'dshgrice-settings-intro' }, t.settingsIntro),
+          h('div', { key: 'tabs', className: 'dshgrice-tabs' }, [
+            h('button', {
+              key: 'tone', type: 'button', className: 'dshgrice-tab', 'data-on': tab === 'tone' ? '1' : undefined,
+              onClick: () => setTab('tone'),
+            }, t.settingsTone),
+            h('button', {
+              key: 'output', type: 'button', className: 'dshgrice-tab', 'data-on': tab === 'output' ? '1' : undefined,
+              onClick: () => setTab('output'),
+            }, t.settingsOutput),
+          ]),
+          h('div', { key: 'actions', className: 'dshgrice-form-foot' }, [
+            h('button', {
+              key: 'add', type: 'button', className: 'dshgrice-btn', 'data-primary': '1', disabled: busy,
+              onClick: startAdd,
+            }, tab === 'tone' ? t.addTone : t.addOutput),
+            h('span', { key: 'spacer', className: 'dshgrice-spacer' }),
+            notice === null ? null : h('span', { key: 'notice', className: 'dshgrice-notice' }, notice),
+            failure === null || editing !== null ? null : h('span', { key: 'error', className: 'dshgrice-error' }, failure),
+            h('button', {
+              key: 'reset', type: 'button', className: 'dshgrice-btn', disabled: busy, onClick: reset,
+            }, t.reset),
+          ]),
+          presets.status === 'loading' && library.length === 0
+            ? h('div', { key: 'loading', className: 'dshgrice-empty' }, t.loading)
+            : rows.length === 0
+              ? h('div', { key: 'empty', className: 'dshgrice-empty' }, t.empty)
+              : h('div', { key: 'rows', className: 'dshgrice-rows' }, rows),
+          form,
+          h('div', { key: 'note', className: 'dshgrice-hint' }, t.builtinNote),
         ])
       }
 
@@ -219,6 +868,25 @@ window.__ModuleLoader__.load({
         id: 'dsh-grice',
         order: 120,
       }, GriceSwitch))
+
+      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+        name: 'conversation.input.left',
+        id: 'dsh-grice-tone',
+        order: 130,
+      }, (props) => h(PresetSelect, { sessionId: props.sessionId, kind: 'tone' })))
+
+      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+        name: 'conversation.input.left',
+        id: 'dsh-grice-output',
+        order: 140,
+      }, (props) => h(PresetSelect, { sessionId: props.sessionId, kind: 'output' })))
+
+      ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
+        id: 'dsh-grice',
+        order: 120,
+        label: () => dictionary().panel,
+      }, SettingsPanel))
     }
 
     return { name: 'dsh-grice', inject, apply }

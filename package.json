@@ -1,7 +1,7 @@
 {
   "name": "dsh-grice",
-  "version": "0.1.0",
-  "description": "格赖斯模式：在 DSH 输入框开关，开启后助手严格按格赖斯（Grice）语用准则高效沟通。A composer switch that makes the assistant obey Grice's cooperative principle.",
+  "version": "0.2.0",
+  "description": "格赖斯模式：输入框里的沟通开关与双下拉（沟通基调 / 产出形态），按会话注入系统提示词；附带预设管理设置页。A composer switch plus tone and output-form dropdowns that steer each session's system prompt, with a preset settings page.",
   "type": "module",
   "main": "index.js",
   "exports": {
