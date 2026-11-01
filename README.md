@@ -69,6 +69,11 @@ dsh plugin --profile <你的 profile> remove dsh-grice
 
 并把 profile `package.json` 的 `dsh.profile.bundles` 中的 `dsh-grice` 去掉。
 
+### 维护者发版注意
+
+市场条目使用 `releases/latest/download/dsh-grice.tgz`（版本号无关的资产名）。每次发新 release 时，把
+`npm pack` 生成的 tarball 重命名为 `dsh-grice.tgz` 并附加到该 release，否则这个链接会在下一次发版后 404。
+
 ## 实现结构
 
 ```
