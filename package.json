@@ -1,0 +1,52 @@
+{
+  "name": "dsh-grice",
+  "version": "0.1.0",
+  "description": "格赖斯模式：在 DSH 输入框开关，开启后助手严格按格赖斯（Grice）语用准则高效沟通。A composer switch that makes the assistant obey Grice's cooperative principle.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "grice",
+    "pragmatics",
+    "communication",
+    "格赖斯",
+    "高效沟通"
+  ],
+  "author": "GinoXiang (https://github.com/GinoXiang)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GinoXiang/dsh-grice.git"
+  },
+  "homepage": "https://github.com/GinoXiang/dsh-grice#readme",
+  "bugs": {
+    "url": "https://github.com/GinoXiang/dsh-grice/issues"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

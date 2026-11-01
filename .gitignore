@@ -1,0 +1,13 @@
+# dependencies and build output
+node_modules/
+.pnpm-store/
+
+# test / scratch output
+.tmp/
+*.log
+
+# editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
