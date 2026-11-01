@@ -1,22 +1,26 @@
-# dsh-grice — 格赖斯模式（沟通开关 + 双下拉 + 预设管理）
+# dsh-grice — 格赖斯模式（合并开关 + 预设管理）
 
-> A composer switch plus tone and output-form dropdowns for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): each session's system prompt follows the selected communication tone and desired output form, with a settings page for the preset library.
+> A merged composer control for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): click the chip to toggle Grice mode, or the small chevron to pick a communication tone and an output form; each session's system prompt follows the selection, with a settings page for the preset library.
 
-DSH 输入框里有三个独立控件，作用域都是**当前会话**：
+DSH 输入框里只有**一个合并控件**，作用域是**当前会话**：
 
-![输入框里的三个控件](docs/composer.png)
+![输入框里的合并控件](docs/composer.png)
 
-| 控件 | 作用 |
-|---|---|
-| **格赖斯**（单击开关） | 总开关：关闭时不注入任何提示词。 |
-| **沟通基调**（下拉） | 默认 `格赖斯·高效`；选其他基调会**替换**内置格赖斯准则；选中后自动开启总开关。 |
-| **产出形态**（下拉） | `无额外要求`、`代码实现`、`数据分析`、`文档写作`、`翻译`、`总结提炼`…；选中后自动开启总开关，与基调互不影响。 |
+- **主按钮（单击）**：开/关总开关；关闭时不注入任何提示词。按钮文字显示当前基调（默认「格赖斯」）。
+- **小三角（▾）**：打开菜单，里面分两组：**沟通基调** 与 **产出形态**。选中任意一项即生效，并自动打开总开关。
+- 菜单每组展示置顶的前 5 条 + **「更多…」**（展开该组全部）。
+
+默认基调 `格赖斯·高效` 就是原来的格赖斯准则；选其他基调会**替换**它。产出形态是另一个维度，可叠加。
+
+小三角打开后的菜单（两组，各自「更多…」展开全部）：
+
+![小三角菜单：沟通基调 + 产出形态](docs/menu.png)
 
 ## 预设
 
 - 内置 **7 个沟通/思考基调**：格赖斯·高效、教练引导、严谨审阅、创意发散、极简结论、苏格拉底追问、均衡自然。
 - 内置 **7 个产出形态**：代码实现、数据分析、文档写作、翻译、总结提炼、教学解释、方案对比。
-- 每个下拉显示置顶的前 5 条 + **「更多…」**（展开全部）。
+- 菜单每组显示置顶的前 5 条 + **「更多…」**（展开全部）。
 - **设置 → 格赖斯**：两个 tab 管理预设 —— 新增、编辑、删除、置顶（前 5 条）、恢复默认；单条提示词上限 2000 字符。
 - 内置预设也可改可删；「恢复默认」会把该分类还原成出厂预设。
 
@@ -38,7 +42,7 @@ grice:output   (order 660)  ← 选了产出形态时注入该提示词
 
 ## 使用
 
-- 单击「格赖斯」开关当前会话的注入；「沟通基调」「产出形态」下拉选择即生效并自动打开总开关。
+- 单击「格赖斯」主按钮开关当前会话的注入；点小三角打开菜单，选基调或产出形态即生效并自动打开总开关。
 - 斜杠命令：
   - `/grice` 或 `/grice status` — 查看当前开关、基调、产出
   - `/grice on` / `/grice off`
@@ -95,7 +99,8 @@ dsh-grice/
 ├── client.js                 # 浏览器：开关、两个下拉、设置页（settings.section）
 ├── test/host.test.mjs        # Host 行为测试（node:test，无依赖）
 ├── test/client.test.mjs      # 浏览器注册测试（假 window.__ModuleLoader__ + 假 ctx）
-├── docs/composer.png         # 输入框三个控件实拍
+├── docs/composer.png         # 输入框合并控件实拍
+├── docs/menu.png             # 小三角菜单实拍
 ├── docs/icon-180.png         # 市场卡片图标
 └── README.md
 ```
@@ -111,8 +116,8 @@ Host 半边（`index.js`）：
 浏览器半边（`client.js`）：
 
 - 经典 client bundle 协议：`window.__ModuleLoader__.load({ id, factory })`，返回 `{ name, inject, apply }`。
-- 两个共享 store：按会话的开关/选择状态（轮询 + 订阅）、全局预设库；三个 composer 控件与设置页共用。
-- `conversation.input.left` 注册三个列表项（`dsh-grice` 120 / `dsh-grice-tone` 130 / `dsh-grice-output` 140）；`settings.section` 注册「格赖斯」设置页。
+- 两个共享 store：按会话的开关/选择状态（轮询 + 订阅）、全局预设库；合并控件与设置页共用。
+- `conversation.input.left` 注册一个合并控件（`dsh-grice`, order 120：主按钮 + 小三角菜单）；`settings.section` 注册「格赖斯」设置页。
 
 ## 测试
 

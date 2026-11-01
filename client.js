@@ -29,6 +29,7 @@ window.__ModuleLoader__.load({
       tone: '基调',
       toneAria: '沟通与思考基调',
       toneHint: '选择沟通/思考基调；选中后自动开启格赖斯模式。',
+      menuAria: '选择沟通基调与产出形态',
       toneDefault: '格赖斯·高效',
       output: '产出',
       outputAria: '产出形态',
@@ -81,6 +82,7 @@ window.__ModuleLoader__.load({
       tone: 'Tone',
       toneAria: 'Communication and thinking tone',
       toneHint: 'Pick a tone; selecting one turns Grice mode on.',
+      menuAria: 'Choose tone and output form',
       toneDefault: 'Grice · efficient',
       output: 'Output',
       outputAria: 'Output form',
@@ -138,7 +140,25 @@ window.__ModuleLoader__.load({
       '.dshgrice-select .dshgrice-label{max-width:132px}',
       '.dshgrice-chevron{display:inline-flex;flex:none;opacity:.65;transition:transform .12s}',
       '.dshgrice-chevron svg{width:12px;height:12px}',
-      '.dshgrice-menu{position:fixed;z-index:2147483000;min-width:208px;max-width:320px;padding:4px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,#fff);box-shadow:0 10px 28px rgba(0,0,0,.2)}',
+      '.dshgrice-split{display:inline-flex;align-items:center;height:28px;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;line-height:20px}',
+      '.dshgrice-split[data-active="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 12%,transparent)}',
+      '.dshgrice-split-main{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 8px;border:none;border-radius:var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm);background:transparent;color:inherit;font:inherit;cursor:pointer;outline:none}',
+      '.dshgrice-split-main:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshgrice-split[data-active="1"] .dshgrice-split-main:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
+      '.dshgrice-split-main:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
+      '.dshgrice-split-main:disabled{opacity:.55;cursor:default}',
+      '.dshgrice-split-divider{width:1px;height:14px;flex:none;background:currentColor;opacity:.18}',
+      '.dshgrice-split-caret{display:inline-flex;align-items:center;justify-content:center;width:20px;height:28px;padding:0;border:none;border-radius:0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;background:transparent;color:inherit;cursor:pointer;outline:none}',
+      '.dshgrice-split-caret:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshgrice-split[data-active="1"] .dshgrice-split-caret:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
+      '.dshgrice-split-caret:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
+      '.dshgrice-menu-wide{min-width:250px;max-width:300px;max-height:440px;overflow-y:auto}',
+      '.dshgrice-menu-section{padding:2px 0 4px}',
+      '.dshgrice-menu-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px 4px}',
+      '.dshgrice-menu-head-label{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:500}',
+      '.dshgrice-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
+      '.dshgrice-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
+      '.dshgrice-menu{position:fixed;z-index:2147483000;min-width:208px;max-width:320px;padding:4px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-base,#fff);box-shadow:0 10px 28px rgba(0,0,0,.2)}',
       '.dshgrice-menu-list{max-height:320px;overflow:auto}',
       '.dshgrice-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
       '.dshgrice-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
@@ -478,94 +498,23 @@ window.__ModuleLoader__.load({
         return snapshot
       }
 
-      /** One composer control: the master switch or one preset dropdown. */
-      function GriceSwitch(props) {
+      /** The merged composer control: master switch plus one small chevron for both preset kinds. */
+      function GriceControl(props) {
         const t = useDictionary()
-        const sessionId = props.sessionId
-        const snapshot = useSession(sessionId)
-        const [busy, setBusy] = React.useState(false)
-        const [failure, setFailure] = React.useState(null)
-
-        React.useEffect(() => {
-          if (failure === null) return undefined
-          const timer = setTimeout(() => setFailure(null), 2500)
-          return () => clearTimeout(timer)
-        }, [failure])
-
-        const onClick = React.useCallback(() => {
-          if (busy || !isSessionId(sessionId)) return
-          setBusy(true)
-          setFailure(null)
-          post('/toggle', { sessionId }).then((data) => {
-            sessionStore.apply(sessionId, data)
-          }).catch((error) => {
-            setFailure(String((error && error.message) || error))
-          }).then(() => {
-            setBusy(false)
-          })
-        }, [busy, sessionId])
-
-        if (!isSessionId(sessionId)) return null
-
-        const enabled = snapshot.enabled === true
-        const title = failure === null
-          ? (enabled ? t.griceOn : t.griceOff)
-          : `${t.failed}（${failure}）`
-        return h('button', {
-          type: 'button',
-          className: 'dshgrice',
-          'data-active': enabled ? '1' : undefined,
-          'data-status': snapshot.status,
-          'aria-label': t.griceAria,
-          'aria-pressed': enabled ? 'true' : 'false',
-          title,
-          disabled: busy,
-          onClick,
-        }, [
-          h('span', { key: 'icon', className: 'dshgrice-icon' }, h(GriceGlyph)),
-          h('span', { key: 'label', className: 'dshgrice-label' }, t.grice),
-        ])
-      }
-
-      function PresetSelect(props) {
-        const t = useDictionary()
-        const kind = props.kind
         const sessionId = props.sessionId
         const snapshot = useSession(sessionId)
         const presets = usePresets()
         const [open, setOpen] = React.useState(false)
-        const [expanded, setExpanded] = React.useState(false)
+        const [expanded, setExpanded] = React.useState({ tone: false, output: false })
         const [position, setPosition] = React.useState(null)
+        const [busy, setBusy] = React.useState(false)
         const [failure, setFailure] = React.useState(null)
         const anchorRef = React.useRef(null)
 
-        if (!isSessionId(sessionId)) return null
-
-        const library = kind === 'tone' ? presets.tones : presets.outputs
-        const selectedId = kind === 'tone'
-          ? (snapshot.tone ?? 'grice')
-          : snapshot.output
-        const selected = library.find((preset) => preset.id === selectedId)
-        const label = selected !== undefined
-          ? selected.name
-          : (kind === 'tone' ? t.toneDefault : t.outputNone)
-
-        const close = () => {
+        const close = React.useCallback(() => {
           setOpen(false)
-          setExpanded(false)
-        }
-
-        const openMenu = () => {
-          const anchor = anchorRef.current
-          if (anchor === null) return
-          const rect = anchor.getBoundingClientRect()
-          const estimated = Math.min(expanded ? 380 : 240, Math.max(160, (expanded ? library.length : 6) * 34 + 24))
-          const below = rect.bottom + 6 + estimated < (typeof window === 'undefined' ? 800 : window.innerHeight)
-          setPosition(below
-            ? { left: Math.max(8, rect.left), top: rect.bottom + 6 }
-            : { left: Math.max(8, rect.left), bottom: (typeof window === 'undefined' ? 0 : window.innerHeight) - rect.top + 6 })
-          setOpen(true)
-        }
+          setExpanded({ tone: false, output: false })
+        }, [])
 
         React.useEffect(() => {
           if (!open) return undefined
@@ -584,7 +533,7 @@ window.__ModuleLoader__.load({
             document.removeEventListener('mousedown', onPointer)
             document.removeEventListener('keydown', onKey)
           }
-        }, [open])
+        }, [open, close])
 
         React.useEffect(() => {
           if (failure === null) return undefined
@@ -592,91 +541,147 @@ window.__ModuleLoader__.load({
           return () => clearTimeout(timer)
         }, [failure])
 
-        const choose = React.useCallback((id) => {
+        const toggle = React.useCallback(() => {
+          if (busy || !isSessionId(sessionId)) return
+          setBusy(true)
+          setFailure(null)
+          post('/toggle', { sessionId }).then((data) => {
+            sessionStore.apply(sessionId, data)
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          }).then(() => {
+            setBusy(false)
+          })
+        }, [busy, sessionId])
+
+        const choose = React.useCallback((kind, id) => {
           if (!isSessionId(sessionId)) return
-          const wanted = id === selectedId ? selectedId : id
-          post('/select', { sessionId, kind, id: wanted }).then((data) => {
+          post('/select', { sessionId, kind, id }).then((data) => {
             sessionStore.apply(sessionId, data)
             close()
           }).catch((error) => {
             setFailure(String((error && error.message) || error))
           })
-        }, [kind, selectedId, sessionId])
+        }, [close, sessionId])
 
-        const pinned = library.filter((preset) => preset.pinned).slice(0, 5)
-        const hidden = library.filter((preset) => !pinned.includes(preset))
-        const rows = expanded ? library : pinned
-        const clearRow = kind === 'output' && !expanded && snapshot.output !== null
+        if (!isSessionId(sessionId)) return null
 
-        const row = (preset) => h('button', {
-          key: preset.id,
+        const toneList = presets.tones
+        const outputList = presets.outputs
+        const toneId = snapshot.tone ?? 'grice'
+        const tonePreset = toneList.find((preset) => preset.id === toneId)
+        const outputPreset = outputList.find((preset) => preset.id === snapshot.output)
+        const enabled = snapshot.enabled === true
+        const toneName = tonePreset === undefined ? t.toneDefault : tonePreset.name
+        const outputName = snapshot.output === null
+          ? t.outputNone
+          : (outputPreset === undefined ? snapshot.output : outputPreset.name)
+        // The chip names the active tone, so the closed state says what the session runs on.
+        const label = toneId === 'grice' ? t.grice : toneName
+        const stateHint = `基调：${toneName}；产出：${outputName}`
+        const title = failure === null
+          ? (enabled ? `${t.griceOn} ${stateHint}` : `${t.griceOff} ${stateHint}`)
+          : `${t.failed}（${failure}）`
+
+        const openMenu = () => {
+          const anchor = anchorRef.current
+          if (anchor === null) return
+          const rect = anchor.getBoundingClientRect()
+          const estimated = 470
+          const below = rect.bottom + 6 + estimated < window.innerHeight
+          setPosition(below
+            ? { left: Math.max(8, rect.left), top: rect.bottom + 6 }
+            : { left: Math.max(8, rect.left), bottom: window.innerHeight - rect.top + 6 })
+          setOpen(true)
+        }
+
+        const row = (kind, preset, selectedId) => h('button', {
+          key: `${kind}-${preset.id}`,
           type: 'button',
           className: 'dshgrice-menu-item',
           'data-selected': preset.id === selectedId ? '1' : undefined,
-          onClick: () => choose(preset.id),
+          onClick: () => choose(kind, preset.id),
         }, [
           h('span', { key: 'check', className: 'dshgrice-menu-check' }, preset.id === selectedId ? h(CheckGlyph) : null),
           h('span', { key: 'text', className: 'dshgrice-menu-text' }, preset.name),
         ])
 
-        const menu = open
-          ? h('div', {
-            className: 'dshgrice-menu',
-            style: position === null ? undefined : position,
-            role: 'menu',
-          }, [
-            clearRow ? h('button', {
+        const section = (kind, list, selectedId, withClear) => {
+          const pinned = list.filter((preset) => preset.pinned).slice(0, 5)
+          const hidden = list.filter((preset) => !pinned.includes(preset))
+          const shown = expanded[kind] ? list : pinned
+          return h('div', { key: `${kind}-section`, className: 'dshgrice-menu-section' }, [
+            h('div', { key: 'head', className: 'dshgrice-menu-head' }, [
+              h('span', { key: 'label', className: 'dshgrice-menu-head-label' }, kind === 'tone' ? t.settingsTone : t.settingsOutput),
+              hidden.length > 0
+                ? h('button', {
+                  key: 'more',
+                  type: 'button',
+                  className: 'dshgrice-menu-more-btn',
+                  onClick: () => setExpanded({ ...expanded, [kind]: !expanded[kind] }),
+                }, expanded[kind] ? t.collapse : t.more)
+                : null,
+            ]),
+            withClear ? h('button', {
               key: 'clear',
               type: 'button',
               className: 'dshgrice-menu-item',
               'data-selected': snapshot.output === null ? '1' : undefined,
-              onClick: () => choose(null),
+              onClick: () => choose('output', null),
             }, [
               h('span', { key: 'check', className: 'dshgrice-menu-check' }, snapshot.output === null ? h(CheckGlyph) : null),
               h('span', { key: 'text', className: 'dshgrice-menu-text' }, t.outputNone),
             ]) : null,
-            h('div', { key: 'list', className: 'dshgrice-menu-list' }, rows.map(row)),
-            !expanded && hidden.length > 0 ? h('div', { key: 'sep', className: 'dshgrice-menu-sep' }) : null,
-            !expanded && hidden.length > 0
-              ? h('button', {
-                key: 'more',
-                type: 'button',
-                className: 'dshgrice-menu-item dshgrice-menu-more',
-                onClick: () => {
-                  setExpanded(true)
-                  const anchor = anchorRef.current
-                  if (anchor !== null) {
-                    const rect = anchor.getBoundingClientRect()
-                    const estimated = Math.min(380, Math.max(160, library.length * 34 + 24))
-                    const below = rect.bottom + 6 + estimated < window.innerHeight
-                    setPosition(below
-                      ? { left: Math.max(8, rect.left), top: rect.bottom + 6 }
-                      : { left: Math.max(8, rect.left), bottom: window.innerHeight - rect.top + 6 })
-                  }
-                },
-              }, [h('span', { key: 'check', className: 'dshgrice-menu-check' }), h('span', { key: 'text', className: 'dshgrice-menu-text' }, t.more)])
-              : null,
+            shown.map((preset) => row(kind, preset, selectedId)),
+          ])
+        }
+
+        const menu = open
+          ? h('div', {
+            className: 'dshgrice-menu dshgrice-menu-wide',
+            style: position === null ? undefined : position,
+            role: 'menu',
+          }, [
+            section('tone', toneList, toneId, false),
+            h('div', { key: 'sep', className: 'dshgrice-menu-sep' }),
+            section('output', outputList, snapshot.output, true),
             h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
           ])
           : null
 
         return h(React.Fragment, null, [
-          h('button', {
-            key: 'trigger',
+          h('div', {
+            key: 'split',
             ref: anchorRef,
-            type: 'button',
-            className: 'dshgrice dshgrice-select',
-            'data-active': snapshot.enabled ? '1' : undefined,
+            className: 'dshgrice-split',
+            'data-active': enabled ? '1' : undefined,
             'data-open': open ? '1' : undefined,
-            title: failure === null ? (kind === 'tone' ? t.toneHint : t.outputHint) : `${t.failed}（${failure}）`,
-            'aria-label': kind === 'tone' ? t.toneAria : t.outputAria,
-            'aria-haspopup': 'menu',
-            'aria-expanded': open ? 'true' : 'false',
-            onClick: () => (open ? close() : openMenu()),
+            'data-status': snapshot.status,
           }, [
-            h('span', { key: 'icon', className: 'dshgrice-icon' }, h(PresetGlyph, { kind })),
-            h('span', { key: 'label', className: 'dshgrice-label' }, label),
-            h('span', { key: 'chevron', className: 'dshgrice-chevron' }, h(ChevronGlyph)),
+            h('button', {
+              key: 'main',
+              type: 'button',
+              className: 'dshgrice-split-main',
+              'aria-label': t.griceAria,
+              'aria-pressed': enabled ? 'true' : 'false',
+              title,
+              disabled: busy,
+              onClick: toggle,
+            }, [
+              h('span', { key: 'icon', className: 'dshgrice-icon' }, h(GriceGlyph)),
+              h('span', { key: 'label', className: 'dshgrice-label' }, label),
+            ]),
+            h('span', { key: 'divider', className: 'dshgrice-split-divider', 'aria-hidden': 'true' }),
+            h('button', {
+              key: 'caret',
+              type: 'button',
+              className: 'dshgrice-split-caret',
+              'aria-label': t.menuAria,
+              'aria-haspopup': 'menu',
+              'aria-expanded': open ? 'true' : 'false',
+              title: t.menuAria,
+              onClick: () => (open ? close() : openMenu()),
+            }, h(ChevronGlyph)),
           ]),
           menu,
         ])
@@ -867,19 +872,7 @@ window.__ModuleLoader__.load({
         name: 'conversation.input.left',
         id: 'dsh-grice',
         order: 120,
-      }, GriceSwitch))
-
-      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-        name: 'conversation.input.left',
-        id: 'dsh-grice-tone',
-        order: 130,
-      }, (props) => h(PresetSelect, { sessionId: props.sessionId, kind: 'tone' })))
-
-      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-        name: 'conversation.input.left',
-        id: 'dsh-grice-output',
-        order: 140,
-      }, (props) => h(PresetSelect, { sessionId: props.sessionId, kind: 'output' })))
+      }, GriceControl))
 
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
