@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
       tone: '基调',
       toneAria: '沟通与思考基调',
       toneHint: '选择沟通/思考基调；选中后自动开启格赖斯模式。',
-      menuAria: '选择沟通基调与产出形态',
+      menuAria: '选择沟通基调',
       toneDefault: '格赖斯·高效',
       output: '产出',
       outputAria: '产出形态',
@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
       tone: 'Tone',
       toneAria: 'Communication and thinking tone',
       toneHint: 'Pick a tone; selecting one turns Grice mode on.',
-      menuAria: 'Choose tone and output form',
+      menuAria: 'Choose communication tone',
       toneDefault: 'Grice · efficient',
       output: 'Output',
       outputAria: 'Output form',
@@ -158,10 +158,6 @@ window.__ModuleLoader__.load({
       '.dshgrice-split-caret:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.dshgrice-split[data-active="1"] .dshgrice-split-caret:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
       '.dshgrice-split-caret:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
-      '.dshgrice-menu-wide{min-width:250px;max-width:300px;max-height:440px;overflow-y:auto}',
-      '.dshgrice-menu-section{padding:2px 0 4px}',
-      '.dshgrice-menu-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px 4px}',
-      '.dshgrice-menu-head-label{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:500}',
       '.dshgrice-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
       '.dshgrice-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
       '.dshgrice-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
@@ -516,7 +512,7 @@ window.__ModuleLoader__.load({
         const presets = usePresets()
         const [open, setOpen] = React.useState(false)
         const [expanded, setExpanded] = React.useState({ tone: false, output: false })
-        const [position, setPosition] = React.useState(null)
+        const [position, setPosition] = React.useState({ left: 980, top: 880 })
         const [busy, setBusy] = React.useState(false)
         const [failure, setFailure] = React.useState(null)
         const anchorRef = React.useRef(null)
@@ -616,43 +612,25 @@ window.__ModuleLoader__.load({
           h('span', { key: 'text', className: 'dshgrice-menu-text' }, preset.name),
         ])
 
-        const section = (kind, list, selectedId, withClear) => {
-          const pinned = list.filter((preset) => preset.pinned).slice(0, 5)
-          const hidden = list.filter((preset) => !pinned.includes(preset))
-          const shown = expanded[kind] ? list : pinned
-          return h('div', { key: `${kind}-section`, className: 'dshgrice-menu-section' }, [
-            h('div', { key: 'head', className: 'dshgrice-menu-head' }, [
-              h('span', { key: 'label', className: 'dshgrice-menu-head-label' }, kind === 'tone' ? t.settingsTone : t.settingsOutput),
-              hidden.length > 0
-                ? h('button', {
-                  key: 'more',
-                  type: 'button',
-                  className: 'dshgrice-menu-more-btn',
-                  onClick: () => setExpanded({ ...expanded, [kind]: !expanded[kind] }),
-                }, expanded[kind] ? t.collapse : t.more)
-                : null,
-            ]),
-            withClear ? h('button', {
-              key: 'clear',
-              type: 'button',
-              className: 'dshgrice-menu-item',
-              'data-selected': snapshot.output === null ? '1' : undefined,
-              onClick: () => choose('output', null),
-            }, [
-              h('span', { key: 'check', className: 'dshgrice-menu-check' }, snapshot.output === null ? h(CheckGlyph) : null),
-              h('span', { key: 'text', className: 'dshgrice-menu-text' }, t.outputNone),
-            ]) : null,
-            shown.map((preset) => row(kind, preset, selectedId)),
-          ])
-        }
+        const pinned = toneList.filter((preset) => preset.pinned).slice(0, 5)
+        const hidden = toneList.filter((preset) => !pinned.includes(preset))
+        const shown = expanded.tone ? toneList : pinned
 
         const menu = open
           ? h('div', {
-            className: 'dshgrice-menu dshgrice-menu-wide',
+            className: 'dshgrice-menu',
             style: position === null ? undefined : position,
             role: 'menu',
           }, [
-            section('tone', toneList, toneId, false),
+            shown.map((preset) => row('tone', preset, toneId)),
+            hidden.length > 0
+              ? h('button', {
+                key: 'more',
+                type: 'button',
+                className: 'dshgrice-menu-more-btn dshgrice-menu-more-row',
+                onClick: () => setExpanded({ ...expanded, tone: !expanded.tone }),
+              }, expanded.tone ? t.collapse : t.more)
+              : null,
             h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
           ])
           : null
