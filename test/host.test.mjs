@@ -145,7 +145,7 @@ function assemblySession(id) {
 
 const ALL_SECTIONS = ['grice:policy', 'grice:tone', 'grice:output']
 
-test('activation registers three prompt sections, eight routes, the command, and seeds presets', async () => {
+test('activation registers three prompt sections, ten routes, the command, and seeds presets', async () => {
   await withHome('activation', () => {
     const services = createServices()
     const ctx = createCtx(services)
@@ -173,8 +173,10 @@ test('activation registers three prompt sections, eight routes, the command, and
       '/dsh-grice/presets/save',
       '/dsh-grice/select',
       '/dsh-grice/set',
+      '/dsh-grice/set-output',
       '/dsh-grice/state',
       '/dsh-grice/toggle',
+      '/dsh-grice/toggle-output',
     ])
     assert.equal(services.commandDefinitions.length, 1)
     assert.equal(services.commandDefinitions[0].name, 'grice')
@@ -196,6 +198,7 @@ test('the master switch drives the Grice policy section and survives a restart',
     assert.equal(policy.text(assemblySession('session-a')), '')
     const on = await callRoute(services.routes.get('/dsh-grice/toggle'), { sessionId: 'session-a' })
     assert.equal(on.body.enabled, true)
+    assert.equal(on.body.outputEnabled, false)
     assert.equal(on.body.tone, null)
     assert.equal(on.body.output, null)
     assert.equal(policy.text(assemblySession('session-a')), POLICY_TEXT)
@@ -252,28 +255,48 @@ test('selecting a tone replaces the built-in policy and auto-enables the switch'
   })
 })
 
-test('selecting an output preset appends its section and is independent of the tone', async () => {
+test('the output switch gates its section independently of the tone switch', async () => {
   await withHome('output', async () => {
     const services = createServices()
     apply(createCtx(services))
     const output = section(services, 'grice:output')
     const policy = section(services, 'grice:policy')
 
+    // Selecting an output preset enables only the output switch.
     const selected = await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: 'code' })
     assert.equal(selected.body.output, 'code')
-    assert.equal(selected.body.enabled, true)
+    assert.equal(selected.body.outputEnabled, true)
+    assert.equal(selected.body.enabled, false)
     assert.match(output.text(assemblySession('session-o')), /代码实现/)
+    assert.equal(policy.text(assemblySession('session-o')), '')
+
+    // Turning the tone switch on adds the policy without touching the output.
+    await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'session-o', enabled: true })
+    assert.equal(policy.text(assemblySession('session-o')), POLICY_TEXT)
+    assert.match(output.text(assemblySession('session-o')), /代码实现/)
+
+    // Turning the output switch off leaves the tone injection alone.
+    const off = await callRoute(services.routes.get('/dsh-grice/toggle-output'), { sessionId: 'session-o' })
+    assert.equal(off.body.outputEnabled, false)
+    assert.equal(output.text(assemblySession('session-o')), '')
     assert.equal(policy.text(assemblySession('session-o')), POLICY_TEXT)
 
+    const on = await callRoute(services.routes.get('/dsh-grice/toggle-output'), { sessionId: 'session-o' })
+    assert.equal(on.body.outputEnabled, true)
+    assert.match(output.text(assemblySession('session-o')), /代码实现/)
+
+    // Clearing the preset stops the output text while the switch stays on.
     await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: null })
     assert.equal(output.text(assemblySession('session-o')), '')
 
-    // Master switch off suppresses every section, selections included.
-    await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: 'doc' })
+    // Turning the tone switch off leaves the selected output preset alone.
     await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'session-o', enabled: false })
-    assert.equal(output.text(assemblySession('session-o')), '')
+    await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: 'doc' })
     assert.equal(policy.text(assemblySession('session-o')), '')
-    assert.equal(section(services, 'grice:tone').text(assemblySession('session-o')), '')
+    assert.match(output.text(assemblySession('session-o')), /文档写作/)
+
+    const badOutputSet = await callRoute(services.routes.get('/dsh-grice/set-output'), { sessionId: 'session-o', enabled: 'yes' })
+    assert.equal(badOutputSet.status, 400)
   })
 })
 
@@ -344,7 +367,7 @@ test('a selected preset that is deleted degrades to no injection', async () => {
   })
 })
 
-test('old boolean state migrates to the v2 session shape', async () => {
+test('old state migrates to the current session shape', async () => {
   await withHome('migrate', () => {
     const file = stateFile()
     fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -357,8 +380,34 @@ test('old boolean state migrates to the v2 session shape', async () => {
     const ctx = createCtx(services)
     apply(ctx)
     const state = readState()
-    assert.deepEqual(state.sessions['session-old'], { grice: true, tone: null, output: null })
+    assert.deepEqual(state.sessions['session-old'], { grice: true, tone: null, output: null, outputEnabled: false })
     assert.equal(section(services, 'grice:policy').text(assemblySession('session-old')), POLICY_TEXT)
+    ctx.dispose()
+  })
+})
+
+test('a v2 state keeps its selected output enabled when migrating', async () => {
+  await withHome('migrate-v2', () => {
+    const file = stateFile()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify({
+      version: 2,
+      sessions: {
+        'session-v2': { grice: true, tone: 'coach', output: 'code' },
+      },
+    }), 'utf8')
+    const services = createServices()
+    const ctx = createCtx(services)
+    apply(ctx)
+    const state = readState()
+    assert.deepEqual(state.sessions['session-v2'], {
+      grice: true,
+      tone: 'coach',
+      output: 'code',
+      outputEnabled: true,
+    })
+    assert.match(section(services, 'grice:tone').text(assemblySession('session-v2')), /教练式引导/)
+    assert.match(section(services, 'grice:output').text(assemblySession('session-v2')), /代码实现/)
     ctx.dispose()
   })
 })
@@ -410,7 +459,7 @@ test('the routes reject non-POST, non-loopback, cross-origin, and malformed inpu
   })
 })
 
-test('the /grice command reports and flips switch and presets', async () => {
+test('the /grice command reports and flips both switches and presets', async () => {
   await withHome('command', async () => {
     const services = createServices()
     const ctx = createCtx(services)
@@ -418,9 +467,9 @@ test('the /grice command reports and flips switch and presets', async () => {
     const command = services.commandDefinitions[0]
     const invoke = (rawInput) => command.handler({ agent: { session: { id: 'session-cmd' } }, rawInput })
 
-    assert.match(invoke('').text, /格赖斯模式：已关闭/)
+    assert.match(invoke('').text, /基调开关：关/)
     assert.equal(invoke(' on').kind, 'success')
-    assert.match(invoke('status').text, /格赖斯模式：已开启/)
+    assert.match(invoke('status').text, /基调开关：开/)
     assert.equal(readState().sessions['session-cmd'].grice, true)
 
     assert.equal(invoke(' tone coach').kind, 'success')
@@ -429,7 +478,13 @@ test('the /grice command reports and flips switch and presets', async () => {
 
     assert.equal(invoke(' output code').kind, 'success')
     assert.equal(readState().sessions['session-cmd'].output, 'code')
+    assert.equal(readState().sessions['session-cmd'].outputEnabled, true)
     assert.match(invoke('status').text, /代码实现/)
+
+    assert.equal(invoke(' output off').kind, 'success')
+    assert.equal(readState().sessions['session-cmd'].outputEnabled, false)
+    assert.equal(invoke(' output on').kind, 'success')
+    assert.equal(readState().sessions['session-cmd'].outputEnabled, true)
 
     assert.equal(invoke(' off').kind, 'success')
     assert.equal(readState().sessions['session-cmd'].grice, false)
@@ -448,7 +503,7 @@ test('an unreadable state and preset file degrade to defaults', async () => {
     const services = createServices()
     const ctx = createCtx(services)
     assert.doesNotThrow(() => apply(ctx))
-    assert.equal(readState().version, 2)
+    assert.equal(readState().version, 3)
     assert.deepEqual(readState().sessions, {})
     assert.ok(readPresets().tones.length >= 5)
     assert.ok(readPresets().outputs.length >= 5)

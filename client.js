@@ -34,6 +34,9 @@ window.__ModuleLoader__.load({
       output: '产出',
       outputAria: '产出形态',
       outputHint: '选择产出形态；选中后自动开启格赖斯模式。',
+      outputOn: '产出形态开关：已开启。点击关闭。',
+      outputOff: '产出形态开关：已关闭。点击开启。',
+      outputMenuAria: '选择产出形态',
       outputNone: '无额外要求',
       more: '更多…',
       collapse: '收起',
@@ -87,6 +90,9 @@ window.__ModuleLoader__.load({
       output: 'Output',
       outputAria: 'Output form',
       outputHint: 'Pick an output form; selecting one turns Grice mode on.',
+      outputOn: 'Output form switch: on. Click to turn off.',
+      outputOff: 'Output form switch: off. Click to turn on.',
+      outputMenuAria: 'Choose output form',
       outputNone: 'No extra requirements',
       more: 'More…',
       collapse: 'Show less',
@@ -158,6 +164,8 @@ window.__ModuleLoader__.load({
       '.dshgrice-menu-head-label{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:500}',
       '.dshgrice-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
       '.dshgrice-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
+      '.dshgrice-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
+      '.dshgrice-menu-more-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.dshgrice-menu{position:fixed;z-index:2147483000;min-width:208px;max-width:320px;padding:4px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-base,#fff);box-shadow:0 10px 28px rgba(0,0,0,.2)}',
       '.dshgrice-menu-list{max-height:320px;overflow:auto}',
       '.dshgrice-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
@@ -285,7 +293,7 @@ window.__ModuleLoader__.load({
         let record = records.get(sessionId)
         if (record === undefined) {
           record = {
-            snapshot: { status: 'loading', enabled: false, tone: null, output: null },
+            snapshot: { status: 'loading', enabled: false, outputEnabled: false, tone: null, output: null },
             listeners: new Set(),
             timer: null,
             loaded: false,
@@ -313,6 +321,7 @@ window.__ModuleLoader__.load({
           publish(record, {
             status: 'ready',
             enabled: data.enabled === true,
+            outputEnabled: data.outputEnabled === true,
             tone: typeof data.tone === 'string' ? data.tone : null,
             output: typeof data.output === 'string' ? data.output : null,
           })
@@ -351,6 +360,7 @@ window.__ModuleLoader__.load({
           publish(record, {
             status: 'ready',
             enabled: payload.enabled === true,
+            outputEnabled: payload.outputEnabled === true,
             tone: typeof payload.tone === 'string' ? payload.tone : null,
             output: typeof payload.output === 'string' ? payload.output : null,
           })
@@ -477,7 +487,7 @@ window.__ModuleLoader__.load({
         const getSnapshot = React.useCallback(
           () => (isSessionId(sessionId)
             ? sessionStore.snapshotOf(sessionId)
-            : { status: 'ready', enabled: false, tone: null, output: null }),
+            : { status: 'ready', enabled: false, outputEnabled: false, tone: null, output: null }),
           [sessionId],
         )
         const snapshot = React.useSyncExternalStore(subscribe, getSnapshot)
@@ -643,8 +653,6 @@ window.__ModuleLoader__.load({
             role: 'menu',
           }, [
             section('tone', toneList, toneId, false),
-            h('div', { key: 'sep', className: 'dshgrice-menu-sep' }),
-            section('output', outputList, snapshot.output, true),
             h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
           ])
           : null
@@ -687,6 +695,166 @@ window.__ModuleLoader__.load({
         ])
       }
 
+      /** The output-form dropdown, a separate button beside the merged tone control. */
+      function OutputSelect(props) {
+        const t = useDictionary()
+        const sessionId = props.sessionId
+        const snapshot = useSession(sessionId)
+        const presets = usePresets()
+        const [open, setOpen] = React.useState(false)
+        const [expanded, setExpanded] = React.useState(false)
+        const [position, setPosition] = React.useState(null)
+        const [failure, setFailure] = React.useState(null)
+        const [busy, setBusy] = React.useState(false)
+        const anchorRef = React.useRef(null)
+
+        const close = React.useCallback(() => {
+          setOpen(false)
+          setExpanded(false)
+        }, [])
+
+        React.useEffect(() => {
+          if (!open) return undefined
+          const onPointer = (event) => {
+            const anchor = anchorRef.current
+            if (anchor !== null && anchor.contains(event.target)) return
+            if (event.target && typeof event.target.closest === 'function' && event.target.closest('.dshgrice-menu')) return
+            close()
+          }
+          const onKey = (event) => {
+            if (event.key === 'Escape') close()
+          }
+          document.addEventListener('mousedown', onPointer)
+          document.addEventListener('keydown', onKey)
+          return () => {
+            document.removeEventListener('mousedown', onPointer)
+            document.removeEventListener('keydown', onKey)
+          }
+        }, [open, close])
+
+        React.useEffect(() => {
+          if (failure === null) return undefined
+          const timer = setTimeout(() => setFailure(null), 3000)
+          return () => clearTimeout(timer)
+        }, [failure])
+
+        const choose = React.useCallback((id) => {
+          if (!isSessionId(sessionId)) return
+          post('/select', { sessionId, kind: 'output', id }).then((data) => {
+            sessionStore.apply(sessionId, data)
+            close()
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          })
+        }, [close, sessionId])
+
+        const toggle = React.useCallback(() => {
+          if (busy || !isSessionId(sessionId)) return
+          setBusy(true)
+          setFailure(null)
+          post('/toggle-output', { sessionId }).then((data) => {
+            sessionStore.apply(sessionId, data)
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          }).then(() => {
+            setBusy(false)
+          })
+        }, [busy, sessionId])
+
+        if (!isSessionId(sessionId)) return null
+
+        const library = presets.outputs
+        const selected = library.find((preset) => preset.id === snapshot.output)
+        const label = selected === undefined ? t.outputNone : selected.name
+        const outputOn = snapshot.outputEnabled === true
+        const title = failure === null
+          ? `${outputOn ? t.outputOn : t.outputOff} 当前：${label}`
+          : `${t.failed}（${failure}）`
+
+        const openMenu = () => {
+          const anchor = anchorRef.current
+          if (anchor === null) return
+          const rect = anchor.getBoundingClientRect()
+          const estimated = Math.min(360, Math.max(180, (expanded ? library.length + 1 : 7) * 32 + 28))
+          const below = rect.bottom + 6 + estimated < (typeof window === 'undefined' ? 800 : window.innerHeight)
+          setPosition(below
+            ? { left: Math.max(8, rect.left), top: rect.bottom + 6 }
+            : { left: Math.max(8, rect.left), bottom: (typeof window === 'undefined' ? 0 : window.innerHeight) - rect.top + 6 })
+          setOpen(true)
+        }
+
+        const pinned = library.filter((preset) => preset.pinned).slice(0, 5)
+        const hidden = library.filter((preset) => !pinned.includes(preset))
+        const shown = expanded ? library : pinned
+
+        const item = (id, name, selectedId) => h('button', {
+          key: `${id ?? 'none'}`,
+          type: 'button',
+          className: 'dshgrice-menu-item',
+          'data-selected': id === selectedId ? '1' : undefined,
+          onClick: () => choose(id),
+        }, [
+          h('span', { key: 'check', className: 'dshgrice-menu-check' }, id === selectedId ? h(CheckGlyph) : null),
+          h('span', { key: 'text', className: 'dshgrice-menu-text' }, name),
+        ])
+
+        const menu = open
+          ? h('div', {
+            className: 'dshgrice-menu',
+            style: position === null ? undefined : position,
+            role: 'menu',
+          }, [
+            item(null, t.outputNone, snapshot.output),
+            shown.map((preset) => item(preset.id, preset.name, snapshot.output)),
+            hidden.length > 0
+              ? h('button', {
+                key: 'more',
+                type: 'button',
+                className: 'dshgrice-menu-more-btn dshgrice-menu-more-row',
+                onClick: () => setExpanded(!expanded),
+              }, expanded ? t.collapse : t.more)
+              : null,
+            h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
+          ])
+          : null
+
+        return h(React.Fragment, null, [
+          h('div', {
+            key: 'split',
+            ref: anchorRef,
+            className: 'dshgrice-split',
+            'data-active': outputOn ? '1' : undefined,
+            'data-open': open ? '1' : undefined,
+            'data-status': snapshot.status,
+          }, [
+            h('button', {
+              key: 'main',
+              type: 'button',
+              className: 'dshgrice-split-main',
+              'aria-label': t.outputAria,
+              'aria-pressed': outputOn ? 'true' : 'false',
+              title,
+              disabled: busy,
+              onClick: toggle,
+            }, [
+              h('span', { key: 'icon', className: 'dshgrice-icon' }, h(PresetGlyph, { kind: 'output' })),
+              h('span', { key: 'label', className: 'dshgrice-label' }, label),
+            ]),
+            h('span', { key: 'divider', className: 'dshgrice-split-divider', 'aria-hidden': 'true' }),
+            h('button', {
+              key: 'caret',
+              type: 'button',
+              className: 'dshgrice-split-caret',
+              'aria-label': t.outputMenuAria,
+              'aria-haspopup': 'menu',
+              'aria-expanded': open ? 'true' : 'false',
+              title: t.outputMenuAria,
+              onClick: () => (open ? close() : openMenu()),
+            }, h(ChevronGlyph)),
+          ]),
+          menu,
+        ])
+      }
       function SettingsPanel() {
         const t = useDictionary()
         const presets = usePresets()
@@ -873,6 +1041,12 @@ window.__ModuleLoader__.load({
         id: 'dsh-grice',
         order: 120,
       }, GriceControl))
+
+      ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+        name: 'conversation.input.left',
+        id: 'dsh-grice-output',
+        order: 140,
+      }, OutputSelect))
 
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',

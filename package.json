@@ -1,7 +1,7 @@
 {
   "name": "dsh-grice",
   "version": "0.2.0",
-  "description": "格赖斯模式：输入框里的沟通开关与双下拉（沟通基调 / 产出形态），按会话注入系统提示词；附带预设管理设置页。A composer switch plus tone and output-form dropdowns that steer each session's system prompt, with a preset settings page.",
+  "description": "格赖斯模式：输入框里两个分体控件（沟通基调、产出形态各带独立开关与预设下拉），按会话注入系统提示词；附带预设管理设置页。Two split composer controls (tone and output form, each with its own switch and preset menu) that steer each session's system prompt, with a preset settings page.",
   "type": "module",
   "main": "index.js",
   "exports": {

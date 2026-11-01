@@ -1,20 +1,19 @@
-# dsh-grice — 格赖斯模式（合并开关 + 预设管理）
+# dsh-grice — 格赖斯模式（基调 + 产出双分体控件 + 预设管理）
 
-> A merged composer control for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): click the chip to toggle Grice mode, or the small chevron to pick a communication tone and an output form; each session's system prompt follows the selection, with a settings page for the preset library.
+> Two split composer controls for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): each pairs an on/off switch with its own preset dropdown — one for the communication tone, one for the output form; each session's system prompt follows the selections, with a settings page for the preset library.
 
-DSH 输入框里只有**一个合并控件**，作用域是**当前会话**：
+DSH 输入框里有两个**分体控件**（开关 + 下拉），作用域都是**当前会话**：
 
-![输入框里的合并控件](docs/composer.png)
+![输入框里的两个分体控件](docs/composer.png)
 
-- **主按钮（单击）**：开/关总开关；关闭时不注入任何提示词。按钮文字显示当前基调（默认「格赖斯」）。
-- **小三角（▾）**：打开菜单，里面分两组：**沟通基调** 与 **产出形态**。选中任意一项即生效，并自动打开总开关。
-- 菜单每组展示置顶的前 5 条 + **「更多…」**（展开该组全部）。
+- **`[格赖斯 | ▾]`**：主按钮是**基调开关**（单击开/关；关闭时不注入基调/格赖斯准则），按钮文字显示当前基调；小三角打开**沟通基调**菜单。
+- **`[无额外要求 | ▾]`**：主按钮是**产出开关**（单击开/关；关闭时不注入产出形态），按钮文字显示当前产出预设；小三角打开**产出形态**菜单。
+- 两开关互相独立；任一菜单选中一项即生效，并自动打开**它自己的**开关。每组展示置顶前 5 条 + **「更多…」**（展开全部）。
+- 默认基调 `格赖斯·高效` 就是原来的格赖斯准则；选其他基调会**替换**它。产出形态是另一个维度，可叠加。
 
-默认基调 `格赖斯·高效` 就是原来的格赖斯准则；选其他基调会**替换**它。产出形态是另一个维度，可叠加。
-
-小三角打开后的菜单（两组，各自「更多…」展开全部）：
-
-![小三角菜单：沟通基调 + 产出形态](docs/menu.png)
+| 沟通基调菜单 | 产出形态菜单 |
+|---|---|
+| ![沟通基调菜单](docs/tone-menu.png) | ![产出形态菜单](docs/output-menu.png) |
 
 ## 预设
 
@@ -30,22 +29,23 @@ DSH 输入框里只有**一个合并控件**，作用域是**当前会话**：
 
 ```
 deployment:persona-prefix
-grice:policy   (order 650)  ← 总开关开、基调为默认时注入内置格赖斯准则
+grice:policy   (order 650)  ← 基调开关开、基调为默认时注入内置格赖斯准则
 grice:tone     (order 650)  ← 选了具体基调时注入该基调提示词（替换 policy）
-grice:output   (order 660)  ← 选了产出形态时注入该提示词
+grice:output   (order 660)  ← 产出开关开、且选了产出形态时注入该提示词
 ```
 
-- 总开关关闭 = 三个 section 全部为空，插件等于不存在。
+- 两个开关分别控制自己的 section：基调关 → policy/tone 为空；产出关 → output 为空。
 - 每个 step 的 assembly 都会重新求值，**切换后同一轮的下一个 step 就生效**，不需要新会话。
-- 状态按 Session 存：`<DSH_HOME>/grice/state.json`；预设库是全局的：`<DSH_HOME>/grice/presets.json`。
+- 状态按 Session 存：`<DSH_HOME>/grice/state.json`（`{grice, tone, output, outputEnabled}`）；预设库是全局的：`<DSH_HOME>/grice/presets.json`。
 - 删除正在使用的预设 → 该会话自动回退（基调回内置格赖斯、产出回无），不会报错。
 
 ## 使用
 
-- 单击「格赖斯」主按钮开关当前会话的注入；点小三角打开菜单，选基调或产出形态即生效并自动打开总开关。
+- 单击两个主按钮分别开关「基调」「产出」；各自的小三角选预设，选中即生效并自动打开对应开关。
 - 斜杠命令：
-  - `/grice` 或 `/grice status` — 查看当前开关、基调、产出
-  - `/grice on` / `/grice off`
+  - `/grice` 或 `/grice status` — 查看两个开关、基调、产出
+  - `/grice on` / `/grice off` — 基调开关
+  - `/grice output on` / `/grice output off` — 产出开关
   - `/grice tone <id>`、`/grice output <id>`；`/grice tone none`、`/grice output none` 恢复默认
 - 内置 id：基调 `grice` `coach` `audit` `creative` `minimal` `socratic` `balanced`；产出 `code` `analysis` `doc` `translate` `summary` `tutorial` `options`。
 
@@ -96,28 +96,29 @@ dsh-grice/
 ├── package.json              # dsh.bundle.patch + dsh.client（platform: web）
 ├── cordis.patch.yml          # insert: id=dsh-grice, name=dsh-grice
 ├── index.js                  # Host：会话状态 + 预设库 + 三个提示词 section + HTTP 路由 + /grice 命令
-├── client.js                 # 浏览器：开关、两个下拉、设置页（settings.section）
+├── client.js                 # 浏览器：两个分体控件（开关 + 菜单）、设置页（settings.section）
 ├── test/host.test.mjs        # Host 行为测试（node:test，无依赖）
 ├── test/client.test.mjs      # 浏览器注册测试（假 window.__ModuleLoader__ + 假 ctx）
-├── docs/composer.png         # 输入框合并控件实拍
-├── docs/menu.png             # 小三角菜单实拍
+├── docs/composer.png         # 输入框两个控件实拍
+├── docs/tone-menu.png        # 沟通基调菜单实拍
+├── docs/output-menu.png      # 产出形态菜单实拍
 ├── docs/icon-180.png         # 市场卡片图标
 └── README.md
 ```
 
 Host 半边（`index.js`）：
 
-- `createStore(ctx)` — `<DSH_HOME>/grice/state.json`，会话 v2 结构 `{ grice, tone, output }`，v1 布尔值自动迁移；mtime 缓存 + 原子写。
+- `createStore(ctx)` — `<DSH_HOME>/grice/state.json`，会话 v3 结构 `{ grice, tone, output, outputEnabled }`，v1/v2 状态自动迁移；mtime 缓存 + 原子写。
 - `createPresetStore(ctx)` — `<DSH_HOME>/grice/presets.json`，内置预设播种、正常化、置顶上限 5、恢复默认。
-- `registerPrompt` — 三个 section 的动态 provider，按 `assembly.agent.session.id` 查当前会话选择。
-- `registerRoutes` — `state` / `toggle` / `set` / `select` / `presets` / `presets/save` / `presets/delete` / `presets/reset`，回环 socket + 回环 Host + 同源 Origin 三道校验。
-- `registerCommand` — `/grice [on|off|tone <id>|output <id>]`。
+- `registerPrompt` — 三个 section 的动态 provider，按 `assembly.agent.session.id` 查当前会话选择；产出 section 由独立开关控制。
+- `registerRoutes` — `state` / `toggle` / `set` / `toggle-output` / `set-output` / `select` / `presets` / `presets/save` / `presets/delete` / `presets/reset`，回环 socket + 回环 Host + 同源 Origin 三道校验。
+- `registerCommand` — `/grice [on|off|output on|output off|tone <id>|output <id>]`。
 
 浏览器半边（`client.js`）：
 
 - 经典 client bundle 协议：`window.__ModuleLoader__.load({ id, factory })`，返回 `{ name, inject, apply }`。
-- 两个共享 store：按会话的开关/选择状态（轮询 + 订阅）、全局预设库；合并控件与设置页共用。
-- `conversation.input.left` 注册一个合并控件（`dsh-grice`, order 120：主按钮 + 小三角菜单）；`settings.section` 注册「格赖斯」设置页。
+- 两个共享 store：按会话的开关/选择状态（轮询 + 订阅）、全局预设库；两个分体控件与设置页共用。
+- `conversation.input.left` 注册两个分体控件（`dsh-grice` 120 = 基调开关+菜单；`dsh-grice-output` 140 = 产出开关+菜单）；`settings.section` 注册「格赖斯」设置页。
 
 ## 测试
 
@@ -132,13 +133,13 @@ npm test
 
 `node --test` 在部分 Windows 沙箱里会因测试 runner 派生子进程而报 EPERM，所以本仓库 README 使用直接运行的写法。
 
-覆盖：三 section 注入与互斥、总开关、按会话隔离、预设库 CRUD / 置顶上限 / 恢复默认、删除回退、v1→v2 状态迁移、HTTP 三道校验、`/grice` 命令、浏览器四个注册点与卸载清理。
+覆盖：三 section 注入与互斥、两个独立开关、按会话隔离、预设库 CRUD / 置顶上限 / 恢复默认、删除回退、v1/v2→v3 状态迁移、HTTP 三道校验、`/grice` 命令、浏览器三个注册点与卸载清理。
 
 运行中的实例可看 `<DSH_HOME>/grice/state.json` 与 `presets.json`。
 
 ## 设计取舍
 
-- **开关与下拉分开**：开关是总闸，双下拉是选择；下拉选中自动打开总闸（用户指定行为），关闭总闸立即停用全部注入。
+- **两个分体控件、各自开关**：基调与产出是正交维度，各自有独立开关；小三角选中预设会自动打开它自己的开关（用户指定行为），关掉某个开关只停用对应注入。
 - **基调替换而非叠加**：选了「教练引导」就不该再同时套着「格赖斯极简」，所以 tone 与内置 policy 互斥；产出形态是另一个维度，可叠加。
 - **预设库全局、选择按会话**：同一套预设在不同对话里复用，但每个对话的当前选择各自独立。
 - **Host 单写方**：浏览器只读/提交，避免多窗口状态漂移；`presets.json` 损坏时自动重新播种。

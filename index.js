@@ -8,7 +8,8 @@
 //     the default (`grice`) or unset;
 //   * `grice:tone`    - a selected tone preset, which replaces the built-in
 //     guidance (order 650);
-//   * `grice:output`  - a selected output-form preset (order 660).
+//   * `grice:output`  - a selected output-form preset (order 660), gated by its
+//     own switch so the tone switch and the output switch are independent.
 //
 // Preset definitions live in `<DSH_HOME>/grice/presets.json` (one global
 // library, editable from the settings page); the per-Session selection lives
@@ -35,7 +36,7 @@ const ORDER_POLICY = 650
 const ORDER_TONE = 650
 const ORDER_OUTPUT = 660
 /** Durable formats. */
-const STATE_VERSION = 2
+const STATE_VERSION = 3
 const PRESETS_VERSION = 2
 /** Bounds. */
 const MAX_TRACKED_SESSIONS = 200
@@ -278,15 +279,19 @@ function writeJson(file, value) {
 
 // --- per-session state -------------------------------------------------------
 
-const EMPTY_SESSION = Object.freeze({ grice: false, tone: null, output: null })
+const EMPTY_SESSION = Object.freeze({ grice: false, tone: null, output: null, outputEnabled: false })
 
 function normalizeSession(raw) {
-  if (raw === true) return { grice: true, tone: null, output: null }
+  if (raw === true) return { grice: true, tone: null, output: null, outputEnabled: false }
   if (raw === false || raw === null || typeof raw !== 'object') return { ...EMPTY_SESSION }
   const grice = raw.grice === true
   const tone = typeof raw.tone === 'string' && raw.tone !== '' ? raw.tone : null
   const output = typeof raw.output === 'string' && raw.output !== '' ? raw.output : null
-  return { grice, tone, output }
+  // v2 stored one master switch; its selected output was injected exactly while
+  // that switch was on, so migrate the output gate instead of guessing.
+  const outputEnabled = raw.outputEnabled === true
+    || (raw.outputEnabled === undefined && output !== null && grice)
+  return { grice, tone, output, outputEnabled }
 }
 
 function normalizeState(raw) {
@@ -303,7 +308,7 @@ function normalizeState(raw) {
     for (const [key, value] of Object.entries(raw.sessions)) {
       if (typeof key !== 'string' || key === '' || key.length > MAX_SESSION_ID_LENGTH) continue
       const session = normalizeSession(value)
-      if (session.grice || session.tone !== null || session.output !== null) state.sessions[key] = session
+      if (session.grice || session.tone !== null || session.output !== null || session.outputEnabled) state.sessions[key] = session
     }
   }
   if (typeof raw.updatedAt === 'string') state.updatedAt = raw.updatedAt
@@ -375,7 +380,7 @@ function createStore(ctx) {
     }
     mutate(draft)
     for (const [key, value] of Object.entries(draft.sessions)) {
-      if (!value.grice && value.tone === null && value.output === null) delete draft.sessions[key]
+      if (!value.grice && value.tone === null && value.output === null && !value.outputEnabled) delete draft.sessions[key]
     }
     pruneSessions(draft)
     draft.version = STATE_VERSION
@@ -394,6 +399,10 @@ function createStore(ctx) {
     enabled(sessionId) {
       return store.session(sessionId).grice
     },
+    /** Whether the independent output-form switch is on for this Session. */
+    outputEnabled(sessionId) {
+      return store.session(sessionId).outputEnabled
+    },
     /** Set the master switch; an empty Session id cannot be stored. */
     setGrice(sessionId, enabled) {
       const id = requireSessionIdValue(sessionId)
@@ -403,17 +412,27 @@ function createStore(ctx) {
       })
       return store.session(id)
     },
-    /** Set one preset slot; `null` clears it. Selecting a preset also enables the master switch. */
+    /** Set the independent output-form switch; an empty Session id cannot be stored. */
+    setOutputEnabled(sessionId, enabled) {
+      const id = requireSessionIdValue(sessionId)
+      update((draft) => {
+        const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
+        draft.sessions[id] = { ...current, outputEnabled: enabled === true }
+      })
+      return store.session(id)
+    },
+    /** Set one preset slot; `null` clears it. Selecting a preset also enables its own switch. */
     setPreset(sessionId, kind, presetId) {
       const id = requireSessionIdValue(sessionId)
       if (!KINDS.includes(kind)) throw new HttpError(400, 'invalid', 'kind must be tone or output')
       const value = presetId === undefined || presetId === null ? null : String(presetId)
       update((draft) => {
         const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
-        const next = { ...current, grice: true }
-        if (kind === 'tone') next.tone = value
-        else next.output = value
-        draft.sessions[id] = next
+        if (kind === 'tone') {
+          draft.sessions[id] = { ...current, grice: true, tone: value }
+          return
+        }
+        draft.sessions[id] = { ...current, outputEnabled: true, output: value }
       })
       return store.session(id)
     },
@@ -422,6 +441,12 @@ function createStore(ctx) {
       const id = requireSessionIdValue(sessionId)
       const next = !store.enabled(id)
       return store.setGrice(id, next)
+    },
+    /** Flip the output-form switch and return the new per-Session state. */
+    toggleOutput(sessionId) {
+      const id = requireSessionIdValue(sessionId)
+      const next = !store.outputEnabled(id)
+      return store.setOutputEnabled(id, next)
     },
     /** Record this process's activation, so the plugin's liveness is observable. */
     markActivated() {
@@ -720,7 +745,7 @@ function registerPrompt(sp, fiber, store, presets) {
     order: ORDER_OUTPUT,
     text: (assembly) => {
       const session = sessionState(assembly)
-      if (session === undefined || !session.grice || session.output === null) return ''
+      if (session === undefined || !session.outputEnabled || session.output === null) return ''
       const preset = presets.find('output', session.output)
       return preset === undefined ? '' : preset.prompt
     },
@@ -833,6 +858,7 @@ function sessionPayload(store, sessionId) {
   return {
     sessionId,
     enabled: session.grice,
+    outputEnabled: session.outputEnabled,
     tone: session.tone,
     output: session.output,
     version: VERSION,
@@ -873,6 +899,25 @@ function registerRoutes(webServer, fiber, store, presets) {
       const sessionId = requireSessionId(body)
       if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'invalid', 'enabled must be a boolean')
       store.setGrice(sessionId, body.enabled)
+      return sessionPayload(store, sessionId)
+    }),
+  }))
+  fiber.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/toggle-output`,
+    handler: routeHandler(async (body) => {
+      const sessionId = requireSessionId(body)
+      store.toggleOutput(sessionId)
+      return sessionPayload(store, sessionId)
+    }),
+  }))
+  fiber.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/set-output`,
+    handler: routeHandler(async (body) => {
+      const sessionId = requireSessionId(body)
+      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'invalid', 'enabled must be a boolean')
+      store.setOutputEnabled(sessionId, body.enabled)
       return sessionPayload(store, sessionId)
     }),
   }))
@@ -943,8 +988,8 @@ function presetName(presets, kind, id) {
 function registerCommand(commands, fiber, store, presets) {
   fiber.effect(() => commands.register({
     name: 'grice',
-    description: '开关格赖斯模式，或查看/设置当前会话的沟通基调与产出形态',
-    input: { hint: '[on|off|tone <id>|output <id>]' },
+    description: '开关格赖斯模式与产出形态，或查看/设置当前会话的沟通基调与产出预设',
+    input: { hint: '[on|off|output on|output off|tone <id>|output <id>]' },
     handler: ({ agent, rawInput }) => {
       const session = agent !== null && typeof agent === 'object' ? agent.session : undefined
       const sessionId = session !== null && typeof session === 'object' && session.id !== undefined ? String(session.id) : ''
@@ -955,16 +1000,21 @@ function registerCommand(commands, fiber, store, presets) {
         const current = store.session(sessionId)
         return {
           kind: 'success',
-          text: `格赖斯模式：${current.grice ? '已开启' : '已关闭'}；基调：${presetName(presets, 'tone', current.tone ?? 'grice')}；产出：${presetName(presets, 'output', current.output)}`,
+          text: `基调开关：${current.grice ? '开' : '关'}（${presetName(presets, 'tone', current.tone ?? 'grice')}）；产出开关：${current.outputEnabled ? '开' : '关'}（${presetName(presets, 'output', current.output)}）`,
         }
       }
       if (verb === 'on' || verb === '开') {
         store.setGrice(sessionId, true)
-        return { kind: 'success', text: '格赖斯模式已开启。' }
+        return { kind: 'success', text: '基调开关已开启。' }
       }
       if (verb === 'off' || verb === '关') {
         store.setGrice(sessionId, false)
-        return { kind: 'success', text: '格赖斯模式已关闭。' }
+        return { kind: 'success', text: '基调开关已关闭。' }
+      }
+      if (verb === 'output' && (rest[0] === 'on' || rest[0] === 'off')) {
+        const enabled = rest[0] === 'on'
+        store.setOutputEnabled(sessionId, enabled)
+        return { kind: 'success', text: `产出开关已${enabled ? '开启' : '关闭'}。` }
       }
       if (verb === 'tone' || verb === 'output') {
         const kind = verb
@@ -975,9 +1025,9 @@ function registerCommand(commands, fiber, store, presets) {
         }
         if (presets.find(kind, id) === undefined) return { kind: 'error', text: `没有 ${kind} 预设「${id}」。` }
         store.setPreset(sessionId, kind, id)
-        return { kind: 'success', text: `${kind === 'tone' ? '基调' : '产出'}已设为「${presetName(presets, kind, id)}」，格赖斯模式已开启。` }
+        return { kind: 'success', text: `${kind === 'tone' ? '基调' : '产出'}已设为「${presetName(presets, kind, id)}」，对应开关已开启。` }
       }
-      return { kind: 'error', text: '用法：/grice [on|off|tone <id>|output <id>]' }
+      return { kind: 'error', text: '用法：/grice [on|off|output on|output off|tone <id>|output <id>]' }
     },
   }))
 }

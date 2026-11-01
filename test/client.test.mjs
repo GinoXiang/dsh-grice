@@ -91,7 +91,7 @@ function fakeCtx() {
   }
 }
 
-test('the bundle registers the merged composer control and the settings section', () => {
+test('the bundle registers the merged tone control, the output dropdown, and the settings section', () => {
   assert.ok(loaded, 'the bundle registered with the module loader')
   assert.equal(loaded.id, 'dsh-grice')
 
@@ -106,12 +106,15 @@ test('the bundle registers the merged composer control and the settings section'
   const ctx = fakeCtx()
   plugin.apply(ctx)
 
-  assert.deepEqual(ctx.injected, ['conversation.input.left', 'settings.section'])
-  assert.equal(ctx.registered.length, 2)
+  assert.deepEqual(ctx.injected, ['conversation.input.left', 'conversation.input.left', 'settings.section'])
+  assert.equal(ctx.registered.length, 3)
 
-  const composer = ctx.registered.find((entry) => entry.options.name === 'conversation.input.left').options
-  assert.equal(composer.id, 'dsh-grice')
-  assert.equal(composer.order, 120)
+  const composer = ctx.registered.filter((entry) => entry.options.name === 'conversation.input.left')
+  assert.equal(composer.length, 2)
+  assert.equal(composer[0].options.id, 'dsh-grice')
+  assert.equal(composer[0].options.order, 120)
+  assert.equal(composer[1].options.id, 'dsh-grice-output')
+  assert.equal(composer[1].options.order, 140)
   const settings = ctx.registered.find((entry) => entry.options.name === 'settings.section').options
   assert.equal(settings.id, 'dsh-grice')
   assert.equal(typeof settings.label, 'function')
