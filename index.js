@@ -1,20 +1,19 @@
-// dsh-grice - host half.
+// dsh-output-style - host half.
 //
-// One per-Session switch (the Grice pill) plus two per-Session preset slots:
-// a communication/thinking tone and an output form. Three independent prompt
-// contributions, all off unless the Session's master switch is on:
+// Two per-Session switches (tone and output form) plus two per-Session preset
+// slots. Three independent prompt contributions, each gated by its own switch:
 //
-//   * `grice:policy`  - the built-in Grice guidance, used while the tone is
+//   * `style:policy`  - the built-in Grice guidance, used while the tone is
 //     the default (`grice`) or unset;
-//   * `grice:tone`    - a selected tone preset, which replaces the built-in
+//   * `style:tone`    - a selected tone preset, which replaces the built-in
 //     guidance (order 650);
-//   * `grice:output`  - a selected output-form preset (order 660), gated by its
+//   * `style:output`  - a selected output-form preset (order 660), gated by its
 //     own switch so the tone switch and the output switch are independent.
 //
-// Preset definitions live in `<DSH_HOME>/grice/presets.json` (one global
+// Preset definitions live in `<DSH_HOME>/output-style/presets.json` (one global
 // library, editable from the settings page); the per-Session selection lives
-// beside the master switch in `<DSH_HOME>/grice/state.json`. The browser half
-// never owns state: it reads and submits, the Host is the single writer.
+// beside the two switches in `<DSH_HOME>/output-style/state.json`. The browser
+// half never owns state: it reads and submits, the Host is the single writer.
 //
 // The plugin imports nothing from the DSH SDK; every service is resolved
 // through the cordis context at call time.
@@ -22,16 +21,20 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-export const name = 'dsh-grice'
+export const name = 'dsh-output-style'
 
 /** Plugin version, also recorded by the browser half's mount beacon. */
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 /** HTTP route prefix owned by this plugin. */
-const ROUTE_PREFIX = '/dsh-grice'
+const ROUTE_PREFIX = '/dsh-output-style'
+/** Directory under the DSH home that holds this plugin's durable files. */
+const STATE_DIR = 'output-style'
+/** Pre-rename directory; migrated once, then left untouched. */
+const LEGACY_STATE_DIR = 'grice'
 /** Prompt sections owned by this plugin. */
-const SECTION_POLICY = 'grice:policy'
-const SECTION_TONE = 'grice:tone'
-const SECTION_OUTPUT = 'grice:output'
+const SECTION_POLICY = 'style:policy'
+const SECTION_TONE = 'style:tone'
+const SECTION_OUTPUT = 'style:output'
 const ORDER_POLICY = 650
 const ORDER_TONE = 650
 const ORDER_OUTPUT = 660
@@ -55,7 +58,7 @@ const PRESET_KEY = { tone: 'tones', output: 'outputs' }
  * the fallback while no other tone is selected.
  */
 export const POLICY_TEXT = [
-  '用户已开启「格赖斯模式」：请严格遵守格赖斯（H. P. Grice）合作原则及其四条准则，用最高的信息效率完成沟通，直到用户关闭该模式。',
+  '用户已开启「格赖斯」沟通基调：请严格遵守格赖斯（H. P. Grice）合作原则及其四条准则，用最高的信息效率完成沟通，直到用户关闭该基调。',
   '- 数量准则（Quantity）：只给恰好充分的信息。不堆砌背景、不复述用户已经说过的内容、不重复自己刚说过的结论；用户没问的不主动展开。',
   '- 质量准则（Quality）：只陈述有依据的内容。不确定时明确说明不确定及原因；绝不编造事实、数据、代码行为、文件路径或引用。',
   '- 关系准则（Relation）：每一句都直接服务于当前问题或当前步骤；不跑题，不插入无关建议、自我评价或能力说明。',
@@ -234,12 +237,30 @@ function dshHome() {
 
 /** Absolute path of the durable switch state. */
 export function stateFile() {
-  return path.join(dshHome(), 'grice', 'state.json')
+  return path.join(dshHome(), STATE_DIR, 'state.json')
 }
 
 /** Absolute path of the durable preset library. */
 export function presetsFile() {
-  return path.join(dshHome(), 'grice', 'presets.json')
+  return path.join(dshHome(), STATE_DIR, 'presets.json')
+}
+
+/** Move the pre-rename directory into place once, so existing users keep state. */
+function migrateLegacyDir(ctx) {
+  const current = path.join(dshHome(), STATE_DIR)
+  const legacy = path.join(dshHome(), LEGACY_STATE_DIR)
+  for (const name of ['state.json', 'presets.json']) {
+    const target = path.join(current, name)
+    const source = path.join(legacy, name)
+    try {
+      if (fs.existsSync(target) || !fs.existsSync(source)) continue
+      fs.mkdirSync(current, { recursive: true })
+      fs.copyFileSync(source, target)
+      ctx?.logger?.info?.('dsh-output-style: migrated %s from the pre-rename location', name)
+    } catch (error) {
+      ctx?.logger?.warn?.('dsh-output-style: could not migrate %s: %s', name, String((error && error.message) || error))
+    }
+  }
 }
 
 /** A request the browser half made, rejected with its own status and code. */
@@ -264,7 +285,7 @@ function readJsonCached(file, ctx, label) {
   try {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch (error) {
-    ctx?.logger?.warn?.('dsh-grice: ignored unreadable %s: %s', label, String((error && error.message) || error))
+    ctx?.logger?.warn?.('dsh-output-style: ignored unreadable %s: %s', label, String((error && error.message) || error))
     return { exists: true, broken: true }
   }
   return { exists: true, stat, raw }
@@ -279,19 +300,19 @@ function writeJson(file, value) {
 
 // --- per-session state -------------------------------------------------------
 
-const EMPTY_SESSION = Object.freeze({ grice: false, tone: null, output: null, outputEnabled: false })
+const EMPTY_SESSION = Object.freeze({ toneEnabled: false, tone: null, output: null, outputEnabled: false })
 
 function normalizeSession(raw) {
-  if (raw === true) return { grice: true, tone: null, output: null, outputEnabled: false }
+  if (raw === true) return { toneEnabled: true, tone: null, output: null, outputEnabled: false }
   if (raw === false || raw === null || typeof raw !== 'object') return { ...EMPTY_SESSION }
-  const grice = raw.grice === true
+  const toneEnabled = raw.toneEnabled === true || raw.grice === true
   const tone = typeof raw.tone === 'string' && raw.tone !== '' ? raw.tone : null
   const output = typeof raw.output === 'string' && raw.output !== '' ? raw.output : null
   // v2 stored one master switch; its selected output was injected exactly while
   // that switch was on, so migrate the output gate instead of guessing.
   const outputEnabled = raw.outputEnabled === true
-    || (raw.outputEnabled === undefined && output !== null && grice)
-  return { grice, tone, output, outputEnabled }
+    || (raw.outputEnabled === undefined && output !== null && toneEnabled)
+  return { toneEnabled, tone, output, outputEnabled }
 }
 
 function normalizeState(raw) {
@@ -308,7 +329,7 @@ function normalizeState(raw) {
     for (const [key, value] of Object.entries(raw.sessions)) {
       if (typeof key !== 'string' || key === '' || key.length > MAX_SESSION_ID_LENGTH) continue
       const session = normalizeSession(value)
-      if (session.grice || session.tone !== null || session.output !== null || session.outputEnabled) state.sessions[key] = session
+      if (session.toneEnabled || session.tone !== null || session.output !== null || session.outputEnabled) state.sessions[key] = session
     }
   }
   if (typeof raw.updatedAt === 'string') state.updatedAt = raw.updatedAt
@@ -380,7 +401,7 @@ function createStore(ctx) {
     }
     mutate(draft)
     for (const [key, value] of Object.entries(draft.sessions)) {
-      if (!value.grice && value.tone === null && value.output === null && !value.outputEnabled) delete draft.sessions[key]
+      if (!value.toneEnabled && value.tone === null && value.output === null && !value.outputEnabled) delete draft.sessions[key]
     }
     pruneSessions(draft)
     draft.version = STATE_VERSION
@@ -396,19 +417,19 @@ function createStore(ctx) {
       return { ...(load().sessions[sessionId] ?? EMPTY_SESSION) }
     },
     /** Whether the master switch is on for this Session. */
-    enabled(sessionId) {
-      return store.session(sessionId).grice
+    toneEnabled(sessionId) {
+      return store.session(sessionId).toneEnabled
     },
     /** Whether the independent output-form switch is on for this Session. */
     outputEnabled(sessionId) {
       return store.session(sessionId).outputEnabled
     },
     /** Set the master switch; an empty Session id cannot be stored. */
-    setGrice(sessionId, enabled) {
+    setToneEnabled(sessionId, enabled) {
       const id = requireSessionIdValue(sessionId)
       update((draft) => {
         const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
-        draft.sessions[id] = { ...current, grice: enabled === true }
+        draft.sessions[id] = { ...current, toneEnabled: enabled === true }
       })
       return store.session(id)
     },
@@ -429,7 +450,7 @@ function createStore(ctx) {
       update((draft) => {
         const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
         if (kind === 'tone') {
-          draft.sessions[id] = { ...current, grice: true, tone: value }
+          draft.sessions[id] = { ...current, toneEnabled: true, tone: value }
           return
         }
         draft.sessions[id] = { ...current, outputEnabled: true, output: value }
@@ -439,8 +460,8 @@ function createStore(ctx) {
     /** Flip the master switch and return the new per-Session state. */
     toggle(sessionId) {
       const id = requireSessionIdValue(sessionId)
-      const next = !store.enabled(id)
-      return store.setGrice(id, next)
+      const next = !store.toneEnabled(id)
+      return store.setToneEnabled(id, next)
     },
     /** Flip the output-form switch and return the new per-Session state. */
     toggleOutput(sessionId) {
@@ -530,7 +551,7 @@ function createPresetStore(ctx) {
       try {
         writeJson(file, seeded)
       } catch (error) {
-        ctx?.logger?.warn?.('dsh-grice: preset library could not be seeded: %s', String((error && error.message) || error))
+        ctx?.logger?.warn?.('dsh-output-style: preset library could not be seeded: %s', String((error && error.message) || error))
       }
       cached = seeded
       cachedStamp = undefined
@@ -613,7 +634,7 @@ function createPresetStore(ctx) {
   try {
     load()
   } catch (error) {
-    ctx?.logger?.warn?.('dsh-grice: preset library could not be prepared: %s', String((error && error.message) || error))
+    ctx?.logger?.warn?.('dsh-output-style: preset library could not be prepared: %s', String((error && error.message) || error))
   }
 
   return {
@@ -725,7 +746,7 @@ function registerPrompt(sp, fiber, store, presets) {
     order: ORDER_POLICY,
     text: (assembly) => {
       const session = sessionState(assembly)
-      if (session === undefined || !session.grice) return ''
+      if (session === undefined || !session.toneEnabled) return ''
       if (session.tone !== null && session.tone !== 'grice') return ''
       return POLICY_TEXT
     },
@@ -735,7 +756,7 @@ function registerPrompt(sp, fiber, store, presets) {
     order: ORDER_TONE,
     text: (assembly) => {
       const session = sessionState(assembly)
-      if (session === undefined || !session.grice || session.tone === null || session.tone === 'grice') return ''
+      if (session === undefined || !session.toneEnabled || session.tone === null || session.tone === 'grice') return ''
       const preset = presets.find('tone', session.tone)
       return preset === undefined ? '' : preset.prompt
     },
@@ -857,7 +878,7 @@ function sessionPayload(store, sessionId) {
   const session = store.session(sessionId)
   return {
     sessionId,
-    enabled: session.grice,
+    enabled: session.toneEnabled,
     outputEnabled: session.outputEnabled,
     tone: session.tone,
     output: session.output,
@@ -898,7 +919,7 @@ function registerRoutes(webServer, fiber, store, presets) {
     handler: routeHandler(async (body) => {
       const sessionId = requireSessionId(body)
       if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'invalid', 'enabled must be a boolean')
-      store.setGrice(sessionId, body.enabled)
+      store.setToneEnabled(sessionId, body.enabled)
       return sessionPayload(store, sessionId)
     }),
   }))
@@ -969,7 +990,7 @@ function registerRoutes(webServer, fiber, store, presets) {
   }))
 }
 
-// --- `/grice` command --------------------------------------------------------
+// --- `/style` command --------------------------------------------------------
 
 function presetName(presets, kind, id) {
   if (id === null || id === undefined) return kind === 'tone' ? '格赖斯·高效' : '无额外要求'
@@ -987,28 +1008,28 @@ function presetName(presets, kind, id) {
  */
 function registerCommand(commands, fiber, store, presets) {
   fiber.effect(() => commands.register({
-    name: 'grice',
-    description: '开关格赖斯模式与产出形态，或查看/设置当前会话的沟通基调与产出预设',
+    name: 'style',
+    description: '开关沟通基调与产出形态，或查看/设置当前会话的基调与产出预设',
     input: { hint: '[on|off|output on|output off|tone <id>|output <id>]' },
     handler: ({ agent, rawInput }) => {
       const session = agent !== null && typeof agent === 'object' ? agent.session : undefined
       const sessionId = session !== null && typeof session === 'object' && session.id !== undefined ? String(session.id) : ''
-      if (sessionId === '') return { kind: 'error', text: '当前会话不可用，无法切换格赖斯模式。' }
+      if (sessionId === '') return { kind: 'error', text: '当前会话不可用，无法切换输出风格。' }
       const argument = String(rawInput === undefined ? '' : rawInput).trim()
       const [verb, ...rest] = argument.split(/\s+/)
       if (argument === '' || verb === 'status') {
         const current = store.session(sessionId)
         return {
           kind: 'success',
-          text: `基调开关：${current.grice ? '开' : '关'}（${presetName(presets, 'tone', current.tone ?? 'grice')}）；产出开关：${current.outputEnabled ? '开' : '关'}（${presetName(presets, 'output', current.output)}）`,
+          text: `基调开关：${current.toneEnabled ? '开' : '关'}（${presetName(presets, 'tone', current.tone ?? 'grice')}）；产出开关：${current.outputEnabled ? '开' : '关'}（${presetName(presets, 'output', current.output)}）`,
         }
       }
       if (verb === 'on' || verb === '开') {
-        store.setGrice(sessionId, true)
+        store.setToneEnabled(sessionId, true)
         return { kind: 'success', text: '基调开关已开启。' }
       }
       if (verb === 'off' || verb === '关') {
-        store.setGrice(sessionId, false)
+        store.setToneEnabled(sessionId, false)
         return { kind: 'success', text: '基调开关已关闭。' }
       }
       if (verb === 'output' && (rest[0] === 'on' || rest[0] === 'off')) {
@@ -1027,7 +1048,7 @@ function registerCommand(commands, fiber, store, presets) {
         store.setPreset(sessionId, kind, id)
         return { kind: 'success', text: `${kind === 'tone' ? '基调' : '产出'}已设为「${presetName(presets, kind, id)}」，对应开关已开启。` }
       }
-      return { kind: 'error', text: '用法：/grice [on|off|output on|output off|tone <id>|output <id>]' }
+      return { kind: 'error', text: '用法：/style [on|off|output on|output off|tone <id>|output <id>]' }
     },
   }))
 }
@@ -1040,12 +1061,13 @@ function registerCommand(commands, fiber, store, presets) {
  * @param ctx - host context.
  */
 export function apply(ctx) {
+  migrateLegacyDir(ctx)
   const store = createStore(ctx)
   const presets = createPresetStore(ctx)
   try {
     store.markActivated()
   } catch (error) {
-    ctx.logger?.warn?.('dsh-grice: activation marker could not be written: %s', String((error && error.message) || error))
+    ctx.logger?.warn?.('dsh-output-style: activation marker could not be written: %s', String((error && error.message) || error))
   }
 
   ctx.inject(['systemPrompt'], (sub) => registerPrompt(sub.systemPrompt, sub, store, presets))

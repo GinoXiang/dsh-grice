@@ -1,8 +1,8 @@
-# dsh-grice bundle patch: inserts the plugin row into the profile roster.
-# The host half (index.js) serves the /dsh-grice/* JSON routes, owns the
-# per-session switch state, and contributes the "grice:policy" system-prompt
-# section while a session has the switch on. The browser half (exports
-# "./client") adds the 格赖斯 switch to the composer toolbar.
+# dsh-output-style bundle patch: inserts the plugin row into the profile roster.
+# The host half (index.js) serves the /dsh-output-style/* JSON routes, owns the
+# per-session style state, and contributes the "style:policy", "style:tone" and
+# "style:output" system-prompt sections. The browser half (exports "./client")
+# adds the two split controls to the composer toolbar and a settings page.
 - insert:
-    - id: dsh-grice
-      name: dsh-grice
+    - id: dsh-output-style
+      name: dsh-output-style

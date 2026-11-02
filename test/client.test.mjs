@@ -1,4 +1,4 @@
-// Behaviour tests for the dsh-grice browser half. The bundle is a classic
+// Behaviour tests for the dsh-output-style browser half. The bundle is a classic
 // client module that calls window.__ModuleLoader__.load at import time, so the
 // test provides that facade, then drives the returned factory and apply with a
 // fake client context and a fake DOM.
@@ -93,13 +93,13 @@ function fakeCtx() {
 
 test('the bundle registers the merged tone control, the output dropdown, and the settings section', () => {
   assert.ok(loaded, 'the bundle registered with the module loader')
-  assert.equal(loaded.id, 'dsh-grice')
+  assert.equal(loaded.id, 'dsh-output-style')
 
   const plugin = loaded.factory((specifier) => {
     assert.equal(specifier, 'react')
     return React
   })
-  assert.equal(plugin.name, 'dsh-grice')
+  assert.equal(plugin.name, 'dsh-output-style')
   assert.deepEqual(plugin.inject, ['slots'])
   assert.equal(typeof plugin.apply, 'function')
 
@@ -111,12 +111,12 @@ test('the bundle registers the merged tone control, the output dropdown, and the
 
   const composer = ctx.registered.filter((entry) => entry.options.name === 'conversation.input.left')
   assert.equal(composer.length, 2)
-  assert.equal(composer[0].options.id, 'dsh-grice')
+  assert.equal(composer[0].options.id, 'dsh-output-style')
   assert.equal(composer[0].options.order, 120)
-  assert.equal(composer[1].options.id, 'dsh-grice-output')
+  assert.equal(composer[1].options.id, 'dsh-output-style-output')
   assert.equal(composer[1].options.order, 140)
   const settings = ctx.registered.find((entry) => entry.options.name === 'settings.section').options
-  assert.equal(settings.id, 'dsh-grice')
+  assert.equal(settings.id, 'dsh-output-style')
   assert.equal(typeof settings.label, 'function')
 
   // Each registration has a component function; the style element is removed

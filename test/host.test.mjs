@@ -1,4 +1,4 @@
-// Behaviour tests for the dsh-grice host half. No dependencies: a fake cordis
+// Behaviour tests for the dsh-output-style host half. No dependencies: a fake cordis
 // context captures the registrations, and a fake HTTP request/response pair
 // exercises the loopback route surface exactly as the browser half does.
 import test from 'node:test'
@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { apply, POLICY_TEXT, stateFile, presetsFile } from '../index.js'
 
-const TEST_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.tmp', 'grice-tests')
+const TEST_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.tmp', 'style-tests')
 
 /** Run one test against a fresh DSH home so state can never leak across tests. */
 async function withHome(name, body) {
@@ -143,7 +143,7 @@ function assemblySession(id) {
   return { agent: { session: { id } } }
 }
 
-const ALL_SECTIONS = ['grice:policy', 'grice:tone', 'grice:output']
+const ALL_SECTIONS = ['style:policy', 'style:tone', 'style:output']
 
 test('activation registers three prompt sections, ten routes, the command, and seeds presets', async () => {
   await withHome('activation', () => {
@@ -157,8 +157,8 @@ test('activation registers three prompt sections, ten routes, the command, and s
     assert.deepEqual(marker.sessions, {})
 
     for (const name of ALL_SECTIONS) assert.ok(section(services, name), `${name} section is registered`)
-    assert.equal(section(services, 'grice:policy').order, 650)
-    assert.equal(section(services, 'grice:output').order, 660)
+    assert.equal(section(services, 'style:policy').order, 650)
+    assert.equal(section(services, 'style:output').order, 660)
 
     const library = readPresets()
     assert.ok(library.tones.length >= 5)
@@ -167,19 +167,19 @@ test('activation registers three prompt sections, ten routes, the command, and s
     assert.equal(library.tones.find((preset) => preset.id === 'grice').pinned, true)
 
     assert.deepEqual([...services.routes.keys()].sort(), [
-      '/dsh-grice/presets',
-      '/dsh-grice/presets/delete',
-      '/dsh-grice/presets/reset',
-      '/dsh-grice/presets/save',
-      '/dsh-grice/select',
-      '/dsh-grice/set',
-      '/dsh-grice/set-output',
-      '/dsh-grice/state',
-      '/dsh-grice/toggle',
-      '/dsh-grice/toggle-output',
+      '/dsh-output-style/presets',
+      '/dsh-output-style/presets/delete',
+      '/dsh-output-style/presets/reset',
+      '/dsh-output-style/presets/save',
+      '/dsh-output-style/select',
+      '/dsh-output-style/set',
+      '/dsh-output-style/set-output',
+      '/dsh-output-style/state',
+      '/dsh-output-style/toggle',
+      '/dsh-output-style/toggle-output',
     ])
     assert.equal(services.commandDefinitions.length, 1)
-    assert.equal(services.commandDefinitions[0].name, 'grice')
+    assert.equal(services.commandDefinitions[0].name, 'style')
 
     ctx.dispose()
     assert.equal(services.sections.length, 0)
@@ -193,19 +193,19 @@ test('the master switch drives the Grice policy section and survives a restart',
     const services = createServices()
     const ctx = createCtx(services)
     apply(ctx)
-    const policy = section(services, 'grice:policy')
+    const policy = section(services, 'style:policy')
 
     assert.equal(policy.text(assemblySession('session-a')), '')
-    const on = await callRoute(services.routes.get('/dsh-grice/toggle'), { sessionId: 'session-a' })
+    const on = await callRoute(services.routes.get('/dsh-output-style/toggle'), { sessionId: 'session-a' })
     assert.equal(on.body.enabled, true)
     assert.equal(on.body.outputEnabled, false)
     assert.equal(on.body.tone, null)
     assert.equal(on.body.output, null)
     assert.equal(policy.text(assemblySession('session-a')), POLICY_TEXT)
     assert.equal(policy.text(assemblySession('session-b')), '')
-    assert.equal(readState().sessions['session-a'].grice, true)
+    assert.equal(readState().sessions['session-a'].toneEnabled, true)
 
-    const off = await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'session-a', enabled: false })
+    const off = await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-a', enabled: false })
     assert.equal(off.body.enabled, false)
     assert.equal(policy.text(assemblySession('session-a')), '')
     ctx.dispose()
@@ -213,7 +213,7 @@ test('the master switch drives the Grice policy section and survives a restart',
     const second = createServices()
     const secondCtx = createCtx(second)
     apply(secondCtx)
-    assert.equal(section(second, 'grice:policy').text(assemblySession('session-a')), '')
+    assert.equal(section(second, 'style:policy').text(assemblySession('session-a')), '')
     secondCtx.dispose()
   })
 })
@@ -222,35 +222,35 @@ test('selecting a tone replaces the built-in policy and auto-enables the switch'
   await withHome('tone', async () => {
     const services = createServices()
     apply(createCtx(services))
-    const policy = section(services, 'grice:policy')
-    const tone = section(services, 'grice:tone')
+    const policy = section(services, 'style:policy')
+    const tone = section(services, 'style:tone')
 
     // No selection yet, switch off.
-    await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'session-t', enabled: false })
+    await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-t', enabled: false })
     assert.equal(tone.text(assemblySession('session-t')), '')
 
-    const selected = await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-t', kind: 'tone', id: 'coach' })
+    const selected = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: 'coach' })
     assert.equal(selected.body.enabled, true)
     assert.equal(selected.body.tone, 'coach')
     assert.equal(policy.text(assemblySession('session-t')), '')
     assert.match(tone.text(assemblySession('session-t')), /教练式引导/)
-    assert.equal(readState().sessions['session-t'].grice, true)
+    assert.equal(readState().sessions['session-t'].toneEnabled, true)
 
     // The built-in grice tone means the built-in policy.
-    await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-t', kind: 'tone', id: 'grice' })
+    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: 'grice' })
     assert.equal(policy.text(assemblySession('session-t')), POLICY_TEXT)
     assert.equal(tone.text(assemblySession('session-t')), '')
 
     // Clearing falls back to the built-in policy while staying on.
-    const cleared = await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-t', kind: 'tone', id: null })
+    const cleared = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: null })
     assert.equal(cleared.body.tone, null)
     assert.equal(cleared.body.enabled, true)
     assert.equal(policy.text(assemblySession('session-t')), POLICY_TEXT)
 
     // Unknown ids are refused.
-    const bad = await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-t', kind: 'tone', id: 'nope' })
+    const bad = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: 'nope' })
     assert.equal(bad.status, 404)
-    const badKind = await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-t', kind: 'music', id: 'grice' })
+    const badKind = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'music', id: 'grice' })
     assert.equal(badKind.status, 400)
   })
 })
@@ -259,11 +259,11 @@ test('the output switch gates its section independently of the tone switch', asy
   await withHome('output', async () => {
     const services = createServices()
     apply(createCtx(services))
-    const output = section(services, 'grice:output')
-    const policy = section(services, 'grice:policy')
+    const output = section(services, 'style:output')
+    const policy = section(services, 'style:policy')
 
     // Selecting an output preset enables only the output switch.
-    const selected = await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: 'code' })
+    const selected = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-o', kind: 'output', id: 'code' })
     assert.equal(selected.body.output, 'code')
     assert.equal(selected.body.outputEnabled, true)
     assert.equal(selected.body.enabled, false)
@@ -271,31 +271,31 @@ test('the output switch gates its section independently of the tone switch', asy
     assert.equal(policy.text(assemblySession('session-o')), '')
 
     // Turning the tone switch on adds the policy without touching the output.
-    await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'session-o', enabled: true })
+    await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-o', enabled: true })
     assert.equal(policy.text(assemblySession('session-o')), POLICY_TEXT)
     assert.match(output.text(assemblySession('session-o')), /代码实现/)
 
     // Turning the output switch off leaves the tone injection alone.
-    const off = await callRoute(services.routes.get('/dsh-grice/toggle-output'), { sessionId: 'session-o' })
+    const off = await callRoute(services.routes.get('/dsh-output-style/toggle-output'), { sessionId: 'session-o' })
     assert.equal(off.body.outputEnabled, false)
     assert.equal(output.text(assemblySession('session-o')), '')
     assert.equal(policy.text(assemblySession('session-o')), POLICY_TEXT)
 
-    const on = await callRoute(services.routes.get('/dsh-grice/toggle-output'), { sessionId: 'session-o' })
+    const on = await callRoute(services.routes.get('/dsh-output-style/toggle-output'), { sessionId: 'session-o' })
     assert.equal(on.body.outputEnabled, true)
     assert.match(output.text(assemblySession('session-o')), /代码实现/)
 
     // Clearing the preset stops the output text while the switch stays on.
-    await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: null })
+    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-o', kind: 'output', id: null })
     assert.equal(output.text(assemblySession('session-o')), '')
 
     // Turning the tone switch off leaves the selected output preset alone.
-    await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'session-o', enabled: false })
-    await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-o', kind: 'output', id: 'doc' })
+    await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-o', enabled: false })
+    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-o', kind: 'output', id: 'doc' })
     assert.equal(policy.text(assemblySession('session-o')), '')
     assert.match(output.text(assemblySession('session-o')), /文档写作/)
 
-    const badOutputSet = await callRoute(services.routes.get('/dsh-grice/set-output'), { sessionId: 'session-o', enabled: 'yes' })
+    const badOutputSet = await callRoute(services.routes.get('/dsh-output-style/set-output'), { sessionId: 'session-o', enabled: 'yes' })
     assert.equal(badOutputSet.status, 400)
   })
 })
@@ -304,10 +304,10 @@ test('the preset library can be read, created, edited, deleted, and reset', asyn
   await withHome('presets', async () => {
     const services = createServices()
     apply(createCtx(services))
-    const presetsRoute = services.routes.get('/dsh-grice/presets')
-    const saveRoute = services.routes.get('/dsh-grice/presets/save')
-    const deleteRoute = services.routes.get('/dsh-grice/presets/delete')
-    const resetRoute = services.routes.get('/dsh-grice/presets/reset')
+    const presetsRoute = services.routes.get('/dsh-output-style/presets')
+    const saveRoute = services.routes.get('/dsh-output-style/presets/save')
+    const deleteRoute = services.routes.get('/dsh-output-style/presets/delete')
+    const resetRoute = services.routes.get('/dsh-output-style/presets/reset')
 
     const initial = await callRoute(presetsRoute, {})
     assert.ok(initial.body.presets.tones.length >= 5)
@@ -352,18 +352,18 @@ test('a selected preset that is deleted degrades to no injection', async () => {
   await withHome('deleted-preset', async () => {
     const services = createServices()
     apply(createCtx(services))
-    const tone = section(services, 'grice:tone')
-    await callRoute(services.routes.get('/dsh-grice/presets/save'), {
+    const tone = section(services, 'style:tone')
+    await callRoute(services.routes.get('/dsh-output-style/presets/save'), {
       kind: 'tone',
       preset: { name: '临时基调', prompt: '临时提示词', pinned: false },
     })
     const library = readPresets()
     const id = library.tones.find((preset) => preset.name === '临时基调').id
-    await callRoute(services.routes.get('/dsh-grice/select'), { sessionId: 'session-d', kind: 'tone', id })
+    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-d', kind: 'tone', id })
     assert.match(tone.text(assemblySession('session-d')), /临时提示词/)
-    await callRoute(services.routes.get('/dsh-grice/presets/delete'), { kind: 'tone', id })
+    await callRoute(services.routes.get('/dsh-output-style/presets/delete'), { kind: 'tone', id })
     assert.equal(tone.text(assemblySession('session-d')), '')
-    assert.equal(section(services, 'grice:policy').text(assemblySession('session-d')), '')
+    assert.equal(section(services, 'style:policy').text(assemblySession('session-d')), '')
   })
 })
 
@@ -380,8 +380,8 @@ test('old state migrates to the current session shape', async () => {
     const ctx = createCtx(services)
     apply(ctx)
     const state = readState()
-    assert.deepEqual(state.sessions['session-old'], { grice: true, tone: null, output: null, outputEnabled: false })
-    assert.equal(section(services, 'grice:policy').text(assemblySession('session-old')), POLICY_TEXT)
+    assert.deepEqual(state.sessions['session-old'], { toneEnabled: true, tone: null, output: null, outputEnabled: false })
+    assert.equal(section(services, 'style:policy').text(assemblySession('session-old')), POLICY_TEXT)
     ctx.dispose()
   })
 })
@@ -401,13 +401,39 @@ test('a v2 state keeps its selected output enabled when migrating', async () => 
     apply(ctx)
     const state = readState()
     assert.deepEqual(state.sessions['session-v2'], {
-      grice: true,
+      toneEnabled: true,
       tone: 'coach',
       output: 'code',
       outputEnabled: true,
     })
-    assert.match(section(services, 'grice:tone').text(assemblySession('session-v2')), /教练式引导/)
-    assert.match(section(services, 'grice:output').text(assemblySession('session-v2')), /代码实现/)
+    assert.match(section(services, 'style:tone').text(assemblySession('session-v2')), /教练式引导/)
+    assert.match(section(services, 'style:output').text(assemblySession('session-v2')), /代码实现/)
+    ctx.dispose()
+  })
+})
+
+test('pre-rename grice/ files are migrated into output-style/', async () => {
+  await withHome('legacy-dir', () => {
+    const legacy = path.join(process.env.DSH_HOME, 'grice')
+    fs.mkdirSync(legacy, { recursive: true })
+    fs.writeFileSync(path.join(legacy, 'state.json'), JSON.stringify({
+      version: 3,
+      sessions: { 'session-legacy': { toneEnabled: true, tone: 'coach', output: null, outputEnabled: false } },
+    }), 'utf8')
+    fs.writeFileSync(path.join(legacy, 'presets.json'), JSON.stringify({
+      version: 2,
+      tones: [{ id: 'grice', name: '格赖斯·高效', prompt: POLICY_TEXT, pinned: true, builtin: true }],
+      outputs: [{ id: 'code', name: '代码实现', prompt: 'legacy output', pinned: true, builtin: true }],
+    }), 'utf8')
+    const services = createServices()
+    const ctx = createCtx(services)
+    apply(ctx)
+    assert.ok(fs.existsSync(stateFile()), 'state migrated to output-style/')
+    assert.ok(fs.existsSync(presetsFile()), 'presets migrated to output-style/')
+    assert.equal(readState().sessions['session-legacy'].tone, 'coach')
+    assert.equal(readPresets().outputs[0].prompt, 'legacy output')
+    // Legacy directory is left untouched.
+    assert.ok(fs.existsSync(path.join(legacy, 'state.json')))
     ctx.dispose()
   })
 })
@@ -416,7 +442,7 @@ test('the hello beacon records that the browser half rendered', async () => {
   await withHome('hello', async () => {
     const services = createServices()
     apply(createCtx(services))
-    const reply = await callRoute(services.routes.get('/dsh-grice/state'), {
+    const reply = await callRoute(services.routes.get('/dsh-output-style/state'), {
       sessionId: 'session-h',
       hello: true,
       version: '0.2.0',
@@ -433,7 +459,7 @@ test('the routes reject non-POST, non-loopback, cross-origin, and malformed inpu
   await withHome('guards', async () => {
     const services = createServices()
     apply(createCtx(services))
-    const route = services.routes.get('/dsh-grice/toggle')
+    const route = services.routes.get('/dsh-output-style/toggle')
 
     const wrongMethod = await callRoute(route, { sessionId: 'x' }, { method: 'GET' })
     assert.equal(wrongMethod.status, 405)
@@ -454,12 +480,12 @@ test('the routes reject non-POST, non-loopback, cross-origin, and malformed inpu
     const badJson = await callRoute(route, undefined, { bodyText: '{not json' })
     assert.equal(badJson.status, 400)
 
-    const badSet = await callRoute(services.routes.get('/dsh-grice/set'), { sessionId: 'x', enabled: 'yes' })
+    const badSet = await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'x', enabled: 'yes' })
     assert.equal(badSet.status, 400)
   })
 })
 
-test('the /grice command reports and flips both switches and presets', async () => {
+test('the /style command reports and flips both switches and presets', async () => {
   await withHome('command', async () => {
     const services = createServices()
     const ctx = createCtx(services)
@@ -470,7 +496,7 @@ test('the /grice command reports and flips both switches and presets', async () 
     assert.match(invoke('').text, /基调开关：关/)
     assert.equal(invoke(' on').kind, 'success')
     assert.match(invoke('status').text, /基调开关：开/)
-    assert.equal(readState().sessions['session-cmd'].grice, true)
+    assert.equal(readState().sessions['session-cmd'].toneEnabled, true)
 
     assert.equal(invoke(' tone coach').kind, 'success')
     assert.equal(readState().sessions['session-cmd'].tone, 'coach')
@@ -487,7 +513,7 @@ test('the /grice command reports and flips both switches and presets', async () 
     assert.equal(readState().sessions['session-cmd'].outputEnabled, true)
 
     assert.equal(invoke(' off').kind, 'success')
-    assert.equal(readState().sessions['session-cmd'].grice, false)
+    assert.equal(readState().sessions['session-cmd'].toneEnabled, false)
     assert.equal(invoke(' tone nope').kind, 'error')
     assert.equal(invoke('bogus').kind, 'error')
     ctx.dispose()

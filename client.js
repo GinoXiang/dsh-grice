@@ -1,51 +1,50 @@
-// dsh-grice - browser half.
+// dsh-output-style - browser half.
 //
 // Classic client bundle (client-modules protocol): register a factory with
 // window.__ModuleLoader__.load and return apply(). The composer carries three
 // independent controls — the Grice master switch, a tone preset dropdown, and
 // an output preset dropdown — and the settings page manages the preset library.
 //
-// The Host is the single writer: every control reads through `/dsh-grice/state`
-// (shared, polled per Session) and submits through `/dsh-grice/*`. A selection
+// The Host is the single writer: every control reads through `/dsh-output-style/state`
+// (shared, polled per Session) and submits through `/dsh-output-style/*`. A selection
 // made in either dropdown auto-enables the master switch, by Host rule.
 window.__ModuleLoader__.load({
-  id: 'dsh-grice',
+  id: 'dsh-output-style',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
 
-    const NS = 'dsh-grice'
-    const ROUTE = '/dsh-grice'
-    const VERSION = '0.2.0'
+    const NS = 'dsh-output-style'
+    const ROUTE = '/dsh-output-style'
+    const VERSION = '0.3.0'
     /** How often an idle control re-reads the Host state (cheap local POST). */
     const POLL_MS = 4000
 
     const zh = {
-      panel: '格赖斯',
-      grice: '格赖斯',
-      griceAria: '格赖斯模式开关',
-      griceOn: '格赖斯模式：已开启。点击关闭。',
-      griceOff: '格赖斯模式：已关闭。点击开启。',
+      panel: '输出风格',
+      styleAria: '基调开关',
+      styleOn: '基调开关：已开启。点击关闭。',
+      styleOff: '基调开关：已关闭。点击开启。',
       tone: '基调',
       toneAria: '沟通与思考基调',
-      toneHint: '选择沟通/思考基调；选中后自动开启格赖斯模式。',
+      toneHint: '选择沟通/思考基调；选中后自动开启基调开关。',
       menuAria: '选择沟通基调',
       toneDefault: '格赖斯·高效',
       output: '产出',
       outputAria: '产出形态',
-      outputHint: '选择产出形态；选中后自动开启格赖斯模式。',
+      outputHint: '选择产出形态；选中后自动开启产出开关。',
       outputOn: '产出形态开关：已开启。点击关闭。',
       outputOff: '产出形态开关：已关闭。点击开启。',
       outputMenuAria: '选择产出形态',
       outputNone: '无额外要求',
       more: '更多…',
       collapse: '收起',
-      manageHint: '在「设置 → 格赖斯」里管理预设',
+      manageHint: '在「设置 → 输出风格」里管理预设',
       loading: '加载中…',
       unavailable: '不可用',
       failed: '操作失败',
-      settingsTitle: '格赖斯模式',
-      settingsIntro: '管理沟通基调与产出形态预设。两个下拉框都从这里取数据；单条提示词上限 2000 字符。',
+      settingsTitle: '输出风格',
+      settingsIntro: '管理沟通基调与产出形态预设。两个控件都从这里取数据；单条提示词上限 2000 字符。',
       settingsTone: '沟通基调',
       settingsOutput: '产出形态',
       builtin: '内置',
@@ -77,31 +76,30 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
-      panel: 'Grice',
-      grice: 'Grice',
-      griceAria: 'Grice mode switch',
-      griceOn: 'Grice mode: on. Click to turn off.',
-      griceOff: 'Grice mode: off. Click to turn on.',
+      panel: 'Output Style',
+      styleAria: 'Tone switch',
+      styleOn: 'Tone switch: on. Click to turn off.',
+      styleOff: 'Tone switch: off. Click to turn on.',
       tone: 'Tone',
       toneAria: 'Communication and thinking tone',
-      toneHint: 'Pick a tone; selecting one turns Grice mode on.',
+      toneHint: 'Pick a tone; selecting one turns its switch on.',
       menuAria: 'Choose communication tone',
       toneDefault: 'Grice · efficient',
       output: 'Output',
       outputAria: 'Output form',
-      outputHint: 'Pick an output form; selecting one turns Grice mode on.',
+      outputHint: 'Pick an output form; selecting one turns its switch on.',
       outputOn: 'Output form switch: on. Click to turn off.',
       outputOff: 'Output form switch: off. Click to turn on.',
       outputMenuAria: 'Choose output form',
       outputNone: 'No extra requirements',
       more: 'More…',
       collapse: 'Show less',
-      manageHint: 'Manage presets in Settings → Grice',
+      manageHint: 'Manage presets in Settings → Output Style',
       loading: 'Loading…',
       unavailable: 'Unavailable',
       failed: 'Failed',
-      settingsTitle: 'Grice mode',
-      settingsIntro: 'Manage communication tone and output-form presets. Both composer dropdowns read from here; each prompt is capped at 2000 characters.',
+      settingsTitle: 'Output style',
+      settingsIntro: 'Manage communication tone and output-form presets. Both composer controls read from here; each prompt is capped at 2000 characters.',
       settingsTone: 'Tone presets',
       settingsOutput: 'Output presets',
       builtin: 'built-in',
@@ -133,75 +131,75 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = [
-      '.dshgrice{display:inline-flex;align-items:center;gap:4px;height:28px;max-width:220px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;line-height:20px;cursor:pointer;outline:none}',
-      '.dshgrice:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dshgrice:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
-      '.dshgrice:disabled{cursor:default;opacity:.55}',
-      '.dshgrice[data-active="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 12%,transparent)}',
-      '.dshgrice[data-active="1"]:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 18%,transparent)}',
-      '.dshgrice-icon{display:inline-flex;flex:none}',
-      '.dshgrice-icon svg{width:14px;height:14px}',
-      '.dshgrice-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dshgrice-select{max-width:180px}',
-      '.dshgrice-select .dshgrice-label{max-width:132px}',
-      '.dshgrice-chevron{display:inline-flex;flex:none;opacity:.65;transition:transform .12s}',
-      '.dshgrice-chevron svg{width:12px;height:12px}',
-      '.dshgrice-split{display:inline-flex;align-items:center;height:28px;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;line-height:20px}',
-      '.dshgrice-split[data-active="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 12%,transparent)}',
-      '.dshgrice-split-main{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 8px;border:none;border-radius:var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm);background:transparent;color:inherit;font:inherit;cursor:pointer;outline:none}',
-      '.dshgrice-split-main:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dshgrice-split[data-active="1"] .dshgrice-split-main:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
-      '.dshgrice-split-main:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
-      '.dshgrice-split-main:disabled{opacity:.55;cursor:default}',
-      '.dshgrice-split-divider{width:1px;height:14px;flex:none;background:currentColor;opacity:.18}',
-      '.dshgrice-split-caret{display:inline-flex;align-items:center;justify-content:center;width:20px;height:28px;padding:0;border:none;border-radius:0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;background:transparent;color:inherit;cursor:pointer;outline:none}',
-      '.dshgrice-split-caret:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dshgrice-split[data-active="1"] .dshgrice-split-caret:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
-      '.dshgrice-split-caret:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
-      '.dshgrice-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
-      '.dshgrice-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
-      '.dshgrice-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
-      '.dshgrice-menu-more-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dshgrice-menu{position:fixed;z-index:2147483000;min-width:208px;max-width:320px;padding:4px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-base,#fff);box-shadow:0 10px 28px rgba(0,0,0,.2)}',
-      '.dshgrice-menu-list{max-height:320px;overflow:auto}',
-      '.dshgrice-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
-      '.dshgrice-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.dshgrice-menu-item[data-selected="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));font-weight:500}',
-      '.dshgrice-menu-check{flex:none;width:14px;text-align:center;opacity:.9}',
-      '.dshgrice-menu-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dshgrice-menu-more{color:var(--dsw-alias-label-secondary)}',
-      '.dshgrice-menu-sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l2,rgba(128,128,128,.25))}',
-      '.dshgrice-menu-hint{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
-      '.dshgrice-settings{display:flex;flex-direction:column;gap:14px;max-width:760px;padding:4px 2px 40px;color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.6}',
-      '.dshgrice-settings-title{margin:0;font-size:18px;font-weight:600;line-height:26px}',
-      '.dshgrice-settings-intro{margin:0;color:var(--dsw-alias-label-secondary);font-size:13px}',
-      '.dshgrice-tabs{display:flex;gap:6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25))}',
-      '.dshgrice-tab{appearance:none;border:none;border-bottom:2px solid transparent;background:transparent;padding:7px 12px;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}',
-      '.dshgrice-tab[data-on="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));border-bottom-color:var(--dsw-alias-state-business-primary,#4d6bfe);font-weight:600}',
-      '.dshgrice-rows{display:flex;flex-direction:column;gap:6px}',
-      '.dshgrice-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));border-radius:var(--dsw-radius-md,8px)}',
-      '.dshgrice-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
-      '.dshgrice-row-name{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}',
-      '.dshgrice-row-meta{color:var(--dsw-alias-label-tertiary);font-size:11px}',
-      '.dshgrice-badge{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px}',
-      '.dshgrice-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}',
-      '.dshgrice-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dshgrice-btn[data-primary="1"]{border-color:transparent;background:var(--dsw-alias-state-business-primary,#4d6bfe);color:#fff}',
-      '.dshgrice-btn[data-danger="1"]:hover{color:var(--dsw-alias-state-error-primary,#e5484d)}',
-      '.dshgrice-btn:disabled{opacity:.5;cursor:default}',
-      '.dshgrice-form{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,#fafafa)}',
-      '.dshgrice-form-title{font-size:13px;font-weight:600}',
-      '.dshgrice-field{display:flex;flex-direction:column;gap:5px}',
-      '.dshgrice-field-label{color:var(--dsw-alias-label-secondary);font-size:12px}',
-      '.dshgrice-input,.dshgrice-textarea{box-sizing:border-box;width:100%;padding:7px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.4));border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary);font-size:13px;font-family:inherit}',
-      '.dshgrice-textarea{min-height:150px;resize:vertical;line-height:1.55}',
-      '.dshgrice-form-foot{display:flex;align-items:center;gap:8px}',
-      '.dshgrice-form-foot .dshgrice-spacer{flex:1}',
-      '.dshgrice-hint{color:var(--dsw-alias-label-tertiary);font-size:11px}',
-      '.dshgrice-notice{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-secondary));font-size:12px}',
-      '.dshgrice-error{color:var(--dsw-alias-state-error-primary,#e5484d);font-size:12px}',
-      '.dshgrice-empty{padding:18px 4px;color:var(--dsw-alias-label-tertiary);font-size:13px}',
-      '.dshgrice-check{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:12px}',
+      '.dshstyle{display:inline-flex;align-items:center;gap:4px;height:28px;max-width:220px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;line-height:20px;cursor:pointer;outline:none}',
+      '.dshstyle:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshstyle:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
+      '.dshstyle:disabled{cursor:default;opacity:.55}',
+      '.dshstyle[data-active="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 12%,transparent)}',
+      '.dshstyle[data-active="1"]:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 18%,transparent)}',
+      '.dshstyle-icon{display:inline-flex;flex:none}',
+      '.dshstyle-icon svg{width:14px;height:14px}',
+      '.dshstyle-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.dshstyle-select{max-width:180px}',
+      '.dshstyle-select .dshstyle-label{max-width:132px}',
+      '.dshstyle-chevron{display:inline-flex;flex:none;opacity:.65;transition:transform .12s}',
+      '.dshstyle-chevron svg{width:12px;height:12px}',
+      '.dshstyle-split{display:inline-flex;align-items:center;height:28px;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;line-height:20px}',
+      '.dshstyle-split[data-active="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 12%,transparent)}',
+      '.dshstyle-split-main{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 8px;border:none;border-radius:var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm);background:transparent;color:inherit;font:inherit;cursor:pointer;outline:none}',
+      '.dshstyle-split-main:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshstyle-split[data-active="1"] .dshstyle-split-main:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
+      '.dshstyle-split-main:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
+      '.dshstyle-split-main:disabled{opacity:.55;cursor:default}',
+      '.dshstyle-split-divider{width:1px;height:14px;flex:none;background:currentColor;opacity:.18}',
+      '.dshstyle-split-caret{display:inline-flex;align-items:center;justify-content:center;width:20px;height:28px;padding:0;border:none;border-radius:0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;background:transparent;color:inherit;cursor:pointer;outline:none}',
+      '.dshstyle-split-caret:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshstyle-split[data-active="1"] .dshstyle-split-caret:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
+      '.dshstyle-split-caret:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
+      '.dshstyle-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
+      '.dshstyle-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
+      '.dshstyle-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
+      '.dshstyle-menu-more-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshstyle-menu{position:fixed;z-index:2147483000;min-width:208px;max-width:320px;padding:4px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-base,#fff);box-shadow:0 10px 28px rgba(0,0,0,.2)}',
+      '.dshstyle-menu-list{max-height:320px;overflow:auto}',
+      '.dshstyle-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
+      '.dshstyle-menu-item:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.dshstyle-menu-item[data-selected="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));font-weight:500}',
+      '.dshstyle-menu-check{flex:none;width:14px;text-align:center;opacity:.9}',
+      '.dshstyle-menu-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshstyle-menu-more{color:var(--dsw-alias-label-secondary)}',
+      '.dshstyle-menu-sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l2,rgba(128,128,128,.25))}',
+      '.dshstyle-menu-hint{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      '.dshstyle-settings{display:flex;flex-direction:column;gap:14px;max-width:760px;padding:4px 2px 40px;color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.6}',
+      '.dshstyle-settings-title{margin:0;font-size:18px;font-weight:600;line-height:26px}',
+      '.dshstyle-settings-intro{margin:0;color:var(--dsw-alias-label-secondary);font-size:13px}',
+      '.dshstyle-tabs{display:flex;gap:6px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25))}',
+      '.dshstyle-tab{appearance:none;border:none;border-bottom:2px solid transparent;background:transparent;padding:7px 12px;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}',
+      '.dshstyle-tab[data-on="1"]{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-primary));border-bottom-color:var(--dsw-alias-state-business-primary,#4d6bfe);font-weight:600}',
+      '.dshstyle-rows{display:flex;flex-direction:column;gap:6px}',
+      '.dshstyle-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));border-radius:var(--dsw-radius-md,8px)}',
+      '.dshstyle-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
+      '.dshstyle-row-name{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}',
+      '.dshstyle-row-meta{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dshstyle-badge{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px}',
+      '.dshstyle-btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.35));border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}',
+      '.dshstyle-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dshstyle-btn[data-primary="1"]{border-color:transparent;background:var(--dsw-alias-state-business-primary,#4d6bfe);color:#fff}',
+      '.dshstyle-btn[data-danger="1"]:hover{color:var(--dsw-alias-state-error-primary,#e5484d)}',
+      '.dshstyle-btn:disabled{opacity:.5;cursor:default}',
+      '.dshstyle-form{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-2,#fafafa)}',
+      '.dshstyle-form-title{font-size:13px;font-weight:600}',
+      '.dshstyle-field{display:flex;flex-direction:column;gap:5px}',
+      '.dshstyle-field-label{color:var(--dsw-alias-label-secondary);font-size:12px}',
+      '.dshstyle-input,.dshstyle-textarea{box-sizing:border-box;width:100%;padding:7px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.4));border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary);font-size:13px;font-family:inherit}',
+      '.dshstyle-textarea{min-height:150px;resize:vertical;line-height:1.55}',
+      '.dshstyle-form-foot{display:flex;align-items:center;gap:8px}',
+      '.dshstyle-form-foot .dshstyle-spacer{flex:1}',
+      '.dshstyle-hint{color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dshstyle-notice{color:var(--dsw-alias-state-business-primary,var(--dsw-alias-label-secondary));font-size:12px}',
+      '.dshstyle-error{color:var(--dsw-alias-state-error-primary,#e5484d);font-size:12px}',
+      '.dshstyle-empty{padding:18px 4px;color:var(--dsw-alias-label-tertiary);font-size:13px}',
+      '.dshstyle-check{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:12px}',
     ].join('')
 
     function isSessionId(value) {
@@ -432,7 +430,7 @@ window.__ModuleLoader__.load({
       style.dataset.dshGrice = '1'
       style.textContent = CSS
       document.head.appendChild(style)
-      ctx.effect(() => () => style.remove(), 'dsh-grice: styles')
+      ctx.effect(() => () => style.remove(), 'dsh-output-style: styles')
 
       // The locale registry is optional: a page without it falls back to the
       // browser language, and every label still renders.
@@ -449,7 +447,7 @@ window.__ModuleLoader__.load({
           } catch {
             return () => {}
           }
-        }, 'dsh-grice: dictionaries')
+        }, 'dsh-output-style: dictionaries')
       }
 
       function dictionary() {
@@ -527,7 +525,7 @@ window.__ModuleLoader__.load({
           const onPointer = (event) => {
             const anchor = anchorRef.current
             if (anchor !== null && anchor.contains(event.target)) return
-            if (event.target && typeof event.target.closest === 'function' && event.target.closest('.dshgrice-menu')) return
+            if (event.target && typeof event.target.closest === 'function' && event.target.closest('.dshstyle-menu')) return
             close()
           }
           const onKey = (event) => {
@@ -583,10 +581,10 @@ window.__ModuleLoader__.load({
           ? t.outputNone
           : (outputPreset === undefined ? snapshot.output : outputPreset.name)
         // The chip names the active tone, so the closed state says what the session runs on.
-        const label = toneId === 'grice' ? t.grice : toneName
+        const label = toneName
         const stateHint = `基调：${toneName}；产出：${outputName}`
         const title = failure === null
-          ? (enabled ? `${t.griceOn} ${stateHint}` : `${t.griceOff} ${stateHint}`)
+          ? (enabled ? `${t.styleOn} ${stateHint}` : `${t.styleOff} ${stateHint}`)
           : `${t.failed}（${failure}）`
 
         const openMenu = () => {
@@ -604,12 +602,12 @@ window.__ModuleLoader__.load({
         const row = (kind, preset, selectedId) => h('button', {
           key: `${kind}-${preset.id}`,
           type: 'button',
-          className: 'dshgrice-menu-item',
+          className: 'dshstyle-menu-item',
           'data-selected': preset.id === selectedId ? '1' : undefined,
           onClick: () => choose(kind, preset.id),
         }, [
-          h('span', { key: 'check', className: 'dshgrice-menu-check' }, preset.id === selectedId ? h(CheckGlyph) : null),
-          h('span', { key: 'text', className: 'dshgrice-menu-text' }, preset.name),
+          h('span', { key: 'check', className: 'dshstyle-menu-check' }, preset.id === selectedId ? h(CheckGlyph) : null),
+          h('span', { key: 'text', className: 'dshstyle-menu-text' }, preset.name),
         ])
 
         const pinned = toneList.filter((preset) => preset.pinned).slice(0, 5)
@@ -618,7 +616,7 @@ window.__ModuleLoader__.load({
 
         const menu = open
           ? h('div', {
-            className: 'dshgrice-menu',
+            className: 'dshstyle-menu',
             style: position === null ? undefined : position,
             role: 'menu',
           }, [
@@ -627,11 +625,11 @@ window.__ModuleLoader__.load({
               ? h('button', {
                 key: 'more',
                 type: 'button',
-                className: 'dshgrice-menu-more-btn dshgrice-menu-more-row',
+                className: 'dshstyle-menu-more-btn dshstyle-menu-more-row',
                 onClick: () => setExpanded({ ...expanded, tone: !expanded.tone }),
               }, expanded.tone ? t.collapse : t.more)
               : null,
-            h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
+            h('div', { key: 'hint', className: 'dshstyle-menu-hint' }, t.manageHint),
           ])
           : null
 
@@ -639,7 +637,7 @@ window.__ModuleLoader__.load({
           h('div', {
             key: 'split',
             ref: anchorRef,
-            className: 'dshgrice-split',
+            className: 'dshstyle-split',
             'data-active': enabled ? '1' : undefined,
             'data-open': open ? '1' : undefined,
             'data-status': snapshot.status,
@@ -647,21 +645,21 @@ window.__ModuleLoader__.load({
             h('button', {
               key: 'main',
               type: 'button',
-              className: 'dshgrice-split-main',
-              'aria-label': t.griceAria,
+              className: 'dshstyle-split-main',
+              'aria-label': t.styleAria,
               'aria-pressed': enabled ? 'true' : 'false',
               title,
               disabled: busy,
               onClick: toggle,
             }, [
-              h('span', { key: 'icon', className: 'dshgrice-icon' }, h(GriceGlyph)),
-              h('span', { key: 'label', className: 'dshgrice-label' }, label),
+              h('span', { key: 'icon', className: 'dshstyle-icon' }, h(GriceGlyph)),
+              h('span', { key: 'label', className: 'dshstyle-label' }, label),
             ]),
-            h('span', { key: 'divider', className: 'dshgrice-split-divider', 'aria-hidden': 'true' }),
+            h('span', { key: 'divider', className: 'dshstyle-split-divider', 'aria-hidden': 'true' }),
             h('button', {
               key: 'caret',
               type: 'button',
-              className: 'dshgrice-split-caret',
+              className: 'dshstyle-split-caret',
               'aria-label': t.menuAria,
               'aria-haspopup': 'menu',
               'aria-expanded': open ? 'true' : 'false',
@@ -696,7 +694,7 @@ window.__ModuleLoader__.load({
           const onPointer = (event) => {
             const anchor = anchorRef.current
             if (anchor !== null && anchor.contains(event.target)) return
-            if (event.target && typeof event.target.closest === 'function' && event.target.closest('.dshgrice-menu')) return
+            if (event.target && typeof event.target.closest === 'function' && event.target.closest('.dshstyle-menu')) return
             close()
           }
           const onKey = (event) => {
@@ -768,17 +766,17 @@ window.__ModuleLoader__.load({
         const item = (id, name, selectedId) => h('button', {
           key: `${id ?? 'none'}`,
           type: 'button',
-          className: 'dshgrice-menu-item',
+          className: 'dshstyle-menu-item',
           'data-selected': id === selectedId ? '1' : undefined,
           onClick: () => choose(id),
         }, [
-          h('span', { key: 'check', className: 'dshgrice-menu-check' }, id === selectedId ? h(CheckGlyph) : null),
-          h('span', { key: 'text', className: 'dshgrice-menu-text' }, name),
+          h('span', { key: 'check', className: 'dshstyle-menu-check' }, id === selectedId ? h(CheckGlyph) : null),
+          h('span', { key: 'text', className: 'dshstyle-menu-text' }, name),
         ])
 
         const menu = open
           ? h('div', {
-            className: 'dshgrice-menu',
+            className: 'dshstyle-menu',
             style: position === null ? undefined : position,
             role: 'menu',
           }, [
@@ -788,11 +786,11 @@ window.__ModuleLoader__.load({
               ? h('button', {
                 key: 'more',
                 type: 'button',
-                className: 'dshgrice-menu-more-btn dshgrice-menu-more-row',
+                className: 'dshstyle-menu-more-btn dshstyle-menu-more-row',
                 onClick: () => setExpanded(!expanded),
               }, expanded ? t.collapse : t.more)
               : null,
-            h('div', { key: 'hint', className: 'dshgrice-menu-hint' }, t.manageHint),
+            h('div', { key: 'hint', className: 'dshstyle-menu-hint' }, t.manageHint),
           ])
           : null
 
@@ -800,7 +798,7 @@ window.__ModuleLoader__.load({
           h('div', {
             key: 'split',
             ref: anchorRef,
-            className: 'dshgrice-split',
+            className: 'dshstyle-split',
             'data-active': outputOn ? '1' : undefined,
             'data-open': open ? '1' : undefined,
             'data-status': snapshot.status,
@@ -808,21 +806,21 @@ window.__ModuleLoader__.load({
             h('button', {
               key: 'main',
               type: 'button',
-              className: 'dshgrice-split-main',
+              className: 'dshstyle-split-main',
               'aria-label': t.outputAria,
               'aria-pressed': outputOn ? 'true' : 'false',
               title,
               disabled: busy,
               onClick: toggle,
             }, [
-              h('span', { key: 'icon', className: 'dshgrice-icon' }, h(PresetGlyph, { kind: 'output' })),
-              h('span', { key: 'label', className: 'dshgrice-label' }, label),
+              h('span', { key: 'icon', className: 'dshstyle-icon' }, h(PresetGlyph, { kind: 'output' })),
+              h('span', { key: 'label', className: 'dshstyle-label' }, label),
             ]),
-            h('span', { key: 'divider', className: 'dshgrice-split-divider', 'aria-hidden': 'true' }),
+            h('span', { key: 'divider', className: 'dshstyle-split-divider', 'aria-hidden': 'true' }),
             h('button', {
               key: 'caret',
               type: 'button',
-              className: 'dshgrice-split-caret',
+              className: 'dshstyle-split-caret',
               'aria-label': t.outputMenuAria,
               'aria-haspopup': 'menu',
               'aria-expanded': open ? 'true' : 'false',
@@ -924,116 +922,116 @@ window.__ModuleLoader__.load({
           })
         }
 
-        const rows = library.map((preset) => h('div', { key: preset.id, className: 'dshgrice-row' }, [
-          h('div', { key: 'main', className: 'dshgrice-row-main' }, [
-            h('div', { key: 'name', className: 'dshgrice-row-name' }, [
+        const rows = library.map((preset) => h('div', { key: preset.id, className: 'dshstyle-row' }, [
+          h('div', { key: 'main', className: 'dshstyle-row-main' }, [
+            h('div', { key: 'name', className: 'dshstyle-row-name' }, [
               h('span', { key: 'text' }, preset.name),
-              preset.pinned ? h('span', { key: 'pin', className: 'dshgrice-badge' }, t.pinned) : null,
-              preset.builtin ? h('span', { key: 'builtin', className: 'dshgrice-badge' }, t.builtin) : null,
+              preset.pinned ? h('span', { key: 'pin', className: 'dshstyle-badge' }, t.pinned) : null,
+              preset.builtin ? h('span', { key: 'builtin', className: 'dshstyle-badge' }, t.builtin) : null,
             ]),
-            h('div', { key: 'meta', className: 'dshgrice-row-meta' }, t.chars((preset.prompt || '').length)),
+            h('div', { key: 'meta', className: 'dshstyle-row-meta' }, t.chars((preset.prompt || '').length)),
           ]),
           h('button', {
-            key: 'edit', type: 'button', className: 'dshgrice-btn', disabled: busy,
+            key: 'edit', type: 'button', className: 'dshstyle-btn', disabled: busy,
             onClick: () => startEdit(preset),
           }, t.edit),
           h('button', {
-            key: 'delete', type: 'button', className: 'dshgrice-btn', 'data-danger': '1', disabled: busy,
+            key: 'delete', type: 'button', className: 'dshstyle-btn', 'data-danger': '1', disabled: busy,
             onClick: () => remove(preset),
           }, t.remove),
         ]))
 
-        const form = editing === null ? null : h('div', { className: 'dshgrice-form' }, [
-          h('div', { key: 'title', className: 'dshgrice-form-title' }, editing.id === undefined ? t.newPreset : t.editPreset),
-          h('label', { key: 'name', className: 'dshgrice-field' }, [
-            h('span', { key: 'label', className: 'dshgrice-field-label' }, t.name),
+        const form = editing === null ? null : h('div', { className: 'dshstyle-form' }, [
+          h('div', { key: 'title', className: 'dshstyle-form-title' }, editing.id === undefined ? t.newPreset : t.editPreset),
+          h('label', { key: 'name', className: 'dshstyle-field' }, [
+            h('span', { key: 'label', className: 'dshstyle-field-label' }, t.name),
             h('input', {
-              key: 'input', className: 'dshgrice-input', value: editing.name, placeholder: t.namePlaceholder,
+              key: 'input', className: 'dshstyle-input', value: editing.name, placeholder: t.namePlaceholder,
               onChange: (event) => setEditing({ ...editing, name: event.target.value }),
             }),
           ]),
-          h('label', { key: 'prompt', className: 'dshgrice-field' }, [
-            h('span', { key: 'label', className: 'dshgrice-field-label' }, t.prompt),
+          h('label', { key: 'prompt', className: 'dshstyle-field' }, [
+            h('span', { key: 'label', className: 'dshstyle-field-label' }, t.prompt),
             h('textarea', {
-              key: 'textarea', className: 'dshgrice-textarea', value: editing.prompt,
+              key: 'textarea', className: 'dshstyle-textarea', value: editing.prompt,
               placeholder: t.promptPlaceholder,
               onChange: (event) => setEditing({ ...editing, prompt: event.target.value.slice(0, 2000) }),
             }),
           ]),
-          h('div', { key: 'pinned', className: 'dshgrice-check' }, h('input', {
+          h('div', { key: 'pinned', className: 'dshstyle-check' }, h('input', {
             type: 'checkbox', checked: editing.pinned === true,
             onChange: (event) => setEditing({ ...editing, pinned: event.target.checked }),
           }), h('span', null, t.pinnedLabel)),
-          h('div', { key: 'foot', className: 'dshgrice-form-foot' }, [
-            failure === null ? null : h('span', { key: 'error', className: 'dshgrice-error' }, failure),
-            h('span', { key: 'spacer', className: 'dshgrice-spacer' }),
-            h('span', { key: 'chars', className: 'dshgrice-hint' }, t.chars((editing.prompt || '').length)),
+          h('div', { key: 'foot', className: 'dshstyle-form-foot' }, [
+            failure === null ? null : h('span', { key: 'error', className: 'dshstyle-error' }, failure),
+            h('span', { key: 'spacer', className: 'dshstyle-spacer' }),
+            h('span', { key: 'chars', className: 'dshstyle-hint' }, t.chars((editing.prompt || '').length)),
             h('button', {
-              key: 'cancel', type: 'button', className: 'dshgrice-btn', disabled: busy,
+              key: 'cancel', type: 'button', className: 'dshstyle-btn', disabled: busy,
               onClick: () => setEditing(null),
             }, t.cancel),
             h('button', {
-              key: 'save', type: 'button', className: 'dshgrice-btn', 'data-primary': '1', disabled: busy,
+              key: 'save', type: 'button', className: 'dshstyle-btn', 'data-primary': '1', disabled: busy,
               onClick: save,
             }, t.save),
           ]),
         ])
 
-        return h('div', { className: 'dshgrice-settings' }, [
-          h('h1', { key: 'title', className: 'dshgrice-settings-title' }, t.settingsTitle),
-          h('p', { key: 'intro', className: 'dshgrice-settings-intro' }, t.settingsIntro),
-          h('div', { key: 'tabs', className: 'dshgrice-tabs' }, [
+        return h('div', { className: 'dshstyle-settings' }, [
+          h('h1', { key: 'title', className: 'dshstyle-settings-title' }, t.settingsTitle),
+          h('p', { key: 'intro', className: 'dshstyle-settings-intro' }, t.settingsIntro),
+          h('div', { key: 'tabs', className: 'dshstyle-tabs' }, [
             h('button', {
-              key: 'tone', type: 'button', className: 'dshgrice-tab', 'data-on': tab === 'tone' ? '1' : undefined,
+              key: 'tone', type: 'button', className: 'dshstyle-tab', 'data-on': tab === 'tone' ? '1' : undefined,
               onClick: () => setTab('tone'),
             }, t.settingsTone),
             h('button', {
-              key: 'output', type: 'button', className: 'dshgrice-tab', 'data-on': tab === 'output' ? '1' : undefined,
+              key: 'output', type: 'button', className: 'dshstyle-tab', 'data-on': tab === 'output' ? '1' : undefined,
               onClick: () => setTab('output'),
             }, t.settingsOutput),
           ]),
-          h('div', { key: 'actions', className: 'dshgrice-form-foot' }, [
+          h('div', { key: 'actions', className: 'dshstyle-form-foot' }, [
             h('button', {
-              key: 'add', type: 'button', className: 'dshgrice-btn', 'data-primary': '1', disabled: busy,
+              key: 'add', type: 'button', className: 'dshstyle-btn', 'data-primary': '1', disabled: busy,
               onClick: startAdd,
             }, tab === 'tone' ? t.addTone : t.addOutput),
-            h('span', { key: 'spacer', className: 'dshgrice-spacer' }),
-            notice === null ? null : h('span', { key: 'notice', className: 'dshgrice-notice' }, notice),
-            failure === null || editing !== null ? null : h('span', { key: 'error', className: 'dshgrice-error' }, failure),
+            h('span', { key: 'spacer', className: 'dshstyle-spacer' }),
+            notice === null ? null : h('span', { key: 'notice', className: 'dshstyle-notice' }, notice),
+            failure === null || editing !== null ? null : h('span', { key: 'error', className: 'dshstyle-error' }, failure),
             h('button', {
-              key: 'reset', type: 'button', className: 'dshgrice-btn', disabled: busy, onClick: reset,
+              key: 'reset', type: 'button', className: 'dshstyle-btn', disabled: busy, onClick: reset,
             }, t.reset),
           ]),
           presets.status === 'loading' && library.length === 0
-            ? h('div', { key: 'loading', className: 'dshgrice-empty' }, t.loading)
+            ? h('div', { key: 'loading', className: 'dshstyle-empty' }, t.loading)
             : rows.length === 0
-              ? h('div', { key: 'empty', className: 'dshgrice-empty' }, t.empty)
-              : h('div', { key: 'rows', className: 'dshgrice-rows' }, rows),
+              ? h('div', { key: 'empty', className: 'dshstyle-empty' }, t.empty)
+              : h('div', { key: 'rows', className: 'dshstyle-rows' }, rows),
           form,
-          h('div', { key: 'note', className: 'dshgrice-hint' }, t.builtinNote),
+          h('div', { key: 'note', className: 'dshstyle-hint' }, t.builtinNote),
         ])
       }
 
       ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
         name: 'conversation.input.left',
-        id: 'dsh-grice',
+        id: 'dsh-output-style',
         order: 120,
       }, GriceControl))
 
       ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
         name: 'conversation.input.left',
-        id: 'dsh-grice-output',
+        id: 'dsh-output-style-output',
         order: 140,
       }, OutputSelect))
 
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
-        id: 'dsh-grice',
+        id: 'dsh-output-style',
         order: 120,
         label: () => dictionary().panel,
       }, SettingsPanel))
     }
 
-    return { name: 'dsh-grice', inject, apply }
+    return { name: 'dsh-output-style', inject, apply }
   },
 })
