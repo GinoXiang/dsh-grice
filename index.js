@@ -24,7 +24,7 @@ import path from 'node:path'
 export const name = 'dsh-output-style'
 
 /** Plugin version, also recorded by the browser half's mount beacon. */
-const VERSION = '0.3.0'
+const VERSION = '0.3.1'
 /** HTTP route prefix owned by this plugin. */
 const ROUTE_PREFIX = '/dsh-output-style'
 /** Directory under the DSH home that holds this plugin's durable files. */

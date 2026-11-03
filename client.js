@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-output-style'
     const ROUTE = '/dsh-output-style'
-    const VERSION = '0.3.0'
+    const VERSION = '0.3.1'
     /** How often an idle control re-reads the Host state (cheap local POST). */
     const POLL_MS = 4000
 
@@ -156,6 +156,9 @@ window.__ModuleLoader__.load({
       '.dshstyle-split-caret:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.dshstyle-split[data-active="1"] .dshstyle-split-caret:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4d6bfe) 10%,transparent)}',
       '.dshstyle-split-caret:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
+      // Narrow composer: keep both controls on one toolbar row by showing one
+      // character of the preset name instead of wrapping the row.
+      '@container (width <= 560px){.dshstyle-split-main .dshstyle-label{max-width:1em;text-overflow:clip}.dshstyle-split-main{gap:4px;padding-right:2px}}',
       '.dshstyle-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
       '.dshstyle-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
       '.dshstyle-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
