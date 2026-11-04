@@ -518,6 +518,34 @@ window.__ModuleLoader__.load({
         lastSessionId() {
           return lastSessionId
         },
+        /**
+         * The session the user is currently looking at: the list row retained by
+         * the main view (same idiom the shipped UI packages use), else the most
+         * recently updated listed session, else the last mounted composer.
+         * @returns a session id, or null when nothing is available.
+         */
+        currentSessionId() {
+          try {
+            const list = sessions !== null && sessions !== undefined && sessions.list !== undefined
+              ? sessions.list.getSnapshot()
+              : undefined
+            const byId = list !== null && typeof list === 'object' && list.byId !== null && typeof list.byId === 'object' ? list.byId : {}
+            const rows = Object.values(byId).filter((row) => row !== null && typeof row === 'object' && typeof row.id === 'string')
+            const displayed = rows.find((row) => (row.retainedBy !== null && typeof row.retainedBy === 'object' ? row.retainedBy.mainView : 0) > 0)
+            if (displayed !== undefined) return displayed.id
+            const timeOf = (row) => {
+              const value = row.updatedAt
+              if (typeof value === 'number' && Number.isFinite(value)) return value
+              const parsed = typeof value === 'string' ? Date.parse(value) : NaN
+              return Number.isFinite(parsed) ? parsed : 0
+            }
+            const newest = rows.slice().sort((left, right) => timeOf(right) - timeOf(left))[0]
+            if (newest !== undefined) return newest.id
+          } catch {
+            // A composition without the sessions service falls through.
+          }
+          return lastSessionId
+        },
         snapshotOf(sessionId) {
           const record = recordOf(sessionId)
           bind(record)
@@ -1233,7 +1261,7 @@ window.__ModuleLoader__.load({
         }
 
         const applyOne = (kind, id) => {
-          const target = styleStore.lastSessionId()
+          const target = styleStore.currentSessionId()
           if (target === null) return Promise.reject(new Error(t.applyNoSession))
           return styleStore.command(target, `/style ${kind} ${id}`)
         }

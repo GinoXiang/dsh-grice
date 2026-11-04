@@ -1077,7 +1077,8 @@ async function analyzeWithAi(fiber, input, presets, fallback) {
     for await (const chunk of llm.stream({
       provider: selection.provider,
       model: selection.model,
-      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+      // Deliberately omit reasoningEffort: the deployment default can be 'max',
+      // which spends the output budget on reasoning and truncates the JSON.
       system: messages.system,
       messages: [{ role: 'user', content: [{ type: 'text', text: messages.user }] }],
       temperature: 0.2,
