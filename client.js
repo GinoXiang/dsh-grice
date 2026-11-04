@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-output-style'
     const ROUTE = '/dsh-output-style'
-    const VERSION = '0.4.0'
+    const VERSION = '0.5.0'
     /** Session projection carrying the live switch state (host-owned). */
     const PROJECTION_KEY = 'outputStylePair'
     /** The wire shape a missing projection reads as; identity-stable for React. */
@@ -88,6 +88,37 @@ window.__ModuleLoader__.load({
       importHint: '选择 JSON 配置文件（数组、单个对象或包含 presets 的对象）',
       importBad: '文件里没有可导入的预设',
       importDone: (count) => `已导入 ${count} 条预设`,
+      tabRecommend: '智能推荐',
+      recommendIntro: '描述这次工作，插件会按任务分析方法论判断它处在 SOP 的哪一步、输入输出是什么，再推荐沟通基调与产出形态。推荐不会自动生效，需要你确认应用。',
+      contentLabel: '工作内容与目标（必填）',
+      contentPlaceholder: '例：把上季度客服工单做归因分析，找出退款率上升的三个主因，周五前给运营负责人一份 2 页结论，能直接用于周会汇报。',
+      contentHint: '建议写清：①要完成什么 ②处在什么流程/阶段 ③上游已有什么材料 ④要产出什么 ⑤给谁用 ⑥时限/格式/风险约束。信息越全，推荐越准。',
+      stageLabel: 'SOP 阶段（可选）',
+      stageAuto: '自动判断',
+      inputsLabel: '上游输入',
+      inputsPlaceholder: '已有数据/文档/接口/依赖…',
+      outputsLabel: '预期产出物',
+      outputsPlaceholder: '报告/代码/方案对比/演示…',
+      audienceLabel: '受众/下游',
+      audiencePlaceholder: '给谁看、对方要做什么决定…',
+      constraintsLabel: '约束',
+      constraintsPlaceholder: '长度/格式/时效/合规/风险…',
+      analyzeRules: '规则分析',
+      analyzeAi: 'AI 分析（任务分析 skill）',
+      analyzing: '分析中…',
+      recommendStage: 'SOP 阶段',
+      recommendInput: '上游输入',
+      recommendOutput: '本阶段产出',
+      recommendTone: '沟通基调',
+      recommendOutputForm: '产出形态',
+      applyTone: '应用基调',
+      applyOutput: '应用产出',
+      applyAll: '全部应用',
+      applied: '已应用',
+      applyNoSession: '还没定位到会话：先在任意对话里打开一次插件控件，再回到这里应用',
+      altLabel: '备选',
+      recommendNotes: '提示',
+      recommendNeedContent: '请先填写工作内容与目标',
       close: '关闭',
     }
 
@@ -147,6 +178,37 @@ window.__ModuleLoader__.load({
       importHint: 'Pick a JSON config (array, single object, or an object with presets)',
       importBad: 'The file holds no importable presets',
       importDone: (count) => `Imported ${count} preset(s)`,
+      tabRecommend: 'Recommend',
+      recommendIntro: 'Describe the work; the plugin applies the task-analysis method to locate its SOP stage, inputs and outputs, then recommends a tone and an output form. Nothing applies until you confirm.',
+      contentLabel: 'Work content and goal (required)',
+      contentPlaceholder: 'e.g. Analyze last quarter’s support tickets, find the three main causes of the refund-rate rise, and deliver a 2-page conclusion for the ops lead by Friday.',
+      contentHint: 'Include: what to finish, which process/stage, upstream material, expected deliverable, audience, and time/format/risk constraints. More context means better recommendations.',
+      stageLabel: 'SOP stage (optional)',
+      stageAuto: 'Detect automatically',
+      inputsLabel: 'Upstream inputs',
+      inputsPlaceholder: 'Data/docs/interfaces/dependencies…',
+      outputsLabel: 'Expected deliverable',
+      outputsPlaceholder: 'Report/code/option comparison/slides…',
+      audienceLabel: 'Audience/downstream',
+      audiencePlaceholder: 'Who reads it, what decision they make…',
+      constraintsLabel: 'Constraints',
+      constraintsPlaceholder: 'Length/format/deadline/compliance/risk…',
+      analyzeRules: 'Rule analysis',
+      analyzeAi: 'AI analysis (task-analysis skill)',
+      analyzing: 'Analyzing…',
+      recommendStage: 'SOP stage',
+      recommendInput: 'Upstream input',
+      recommendOutput: 'Stage output',
+      recommendTone: 'Tone',
+      recommendOutputForm: 'Output form',
+      applyTone: 'Apply tone',
+      applyOutput: 'Apply output',
+      applyAll: 'Apply both',
+      applied: 'Applied',
+      applyNoSession: 'No session located yet: open the plugin controls in any conversation once, then come back to apply',
+      altLabel: 'Alternatives',
+      recommendNotes: 'Notes',
+      recommendNeedContent: 'Describe the work first',
       close: 'Close',
     }
 
@@ -189,6 +251,25 @@ window.__ModuleLoader__.load({
       // The command row wrapper is core markup without our classes; :has() lets the
       // marker collapse its whole flow item so a quiet switch leaves no blank row.
       '[data-chat-flow-kind="command"]:has(.dshstyle-cmdrow-hidden){display:none!important}',
+      '.dshstyle-rec{display:flex;flex-direction:column;gap:10px}',
+      '.dshstyle-rec-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.6}',
+      '.dshstyle-rec-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}',
+      '.dshstyle-rec-wide{grid-column:1 / -1}',
+      '.dshstyle-rec-result{border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));display:flex;flex-direction:column;gap:8px;padding-top:10px}',
+      '.dshstyle-rec-stage{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.dshstyle-rec-role{font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.dshstyle-rec-io{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.dshstyle-rec-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}',
+      '.dshstyle-rec-card{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.25));border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px}',
+      '.dshstyle-rec-card-title{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+      '.dshstyle-rec-name{font-size:13px;font-weight:600}',
+      '.dshstyle-rec-reason{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}',
+      '.dshstyle-rec-alt{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
+      '.dshstyle-rec-alt-label{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+      '.dshstyle-chip{appearance:none;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));background:transparent;border-radius:999px;padding:1px 8px;font-size:12px;color:inherit;cursor:pointer}',
+      '.dshstyle-chip[data-on="1"]{border-color:var(--dsw-alias-state-business-primary,#4d6bfe);color:var(--dsw-alias-state-business-primary,#4d6bfe)}',
+      '.dshstyle-rec-notes{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary)}',
+      '.dshstyle-rec-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}',
       '.dshstyle-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
       '.dshstyle-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
       '.dshstyle-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
@@ -322,6 +403,7 @@ window.__ModuleLoader__.load({
      */
     function createSessionStore(sessions, remote) {
       const records = new Map()
+      let lastSessionId = null
 
       function recordOf(sessionId) {
         let record = records.get(sessionId)
@@ -428,6 +510,14 @@ window.__ModuleLoader__.load({
       }
 
       return {
+        /** Remember the session whose composer mounted most recently (settings-page apply target). */
+        noteSession(sessionId) {
+          if (typeof sessionId === 'string' && sessionId !== '') lastSessionId = sessionId
+        },
+        /** The most recently mounted composer session, or null. */
+        lastSessionId() {
+          return lastSessionId
+        },
         snapshotOf(sessionId) {
           const record = recordOf(sessionId)
           bind(record)
@@ -611,6 +701,9 @@ window.__ModuleLoader__.load({
           () => (isSessionId(sessionId) ? sessionStore.snapshotOf(sessionId) : EMPTY_STYLE),
           [sessionId],
         )
+        React.useEffect(() => {
+          if (isSessionId(sessionId)) sessionStore.noteSession(sessionId)
+        }, [sessionId])
         return React.useSyncExternalStore(subscribe, getSnapshot)
       }
 
@@ -961,6 +1054,18 @@ window.__ModuleLoader__.load({
         return []
       }
 
+      /** SOP stages offered by the recommendation form (ids mirror the host catalog). */
+      const RECOMMEND_STAGES = [
+        { id: 'requirement', label: '需求澄清' },
+        { id: 'research', label: '调研收集' },
+        { id: 'design', label: '方案设计' },
+        { id: 'execute', label: '执行实现' },
+        { id: 'deliver', label: '交付汇报' },
+        { id: 'review', label: '复盘改进' },
+        { id: 'collaborate', label: '协作沟通' },
+        { id: 'general', label: '通用任务' },
+      ]
+
       function SettingsPanel() {
         const t = useDictionary()
         const presets = usePresets()
@@ -970,6 +1075,12 @@ window.__ModuleLoader__.load({
         const [failure, setFailure] = React.useState(null)
         const [busy, setBusy] = React.useState(false)
         const [importing, setImporting] = React.useState(false)
+        const [recommendForm, setRecommendForm] = React.useState({ content: '', stage: '', inputs: '', outputs: '', audience: '', constraints: '' })
+        const [analysis, setAnalysis] = React.useState(null)
+        const [analyzing, setAnalyzing] = React.useState(false)
+        const [tonePick, setTonePick] = React.useState(null)
+        const [outputPick, setOutputPick] = React.useState(null)
+        const [applyNotice, setApplyNotice] = React.useState(null)
         const fileRef = React.useRef(null)
 
         const library = tab === 'tone' ? presets.tones : presets.outputs
@@ -1100,6 +1211,155 @@ window.__ModuleLoader__.load({
             })
         }
 
+        const runAnalysis = (mode) => {
+          if (analyzing) return
+          if (recommendForm.content.trim() === '') {
+            setFailure(t.recommendNeedContent)
+            return
+          }
+          setAnalyzing(true)
+          setFailure(null)
+          setApplyNotice(null)
+          post('/analyze', { mode, input: recommendForm }).then((data) => {
+            const next = data.analysis
+            setAnalysis(next)
+            setTonePick(next.tone.recommended.id)
+            setOutputPick(next.output.recommended.id)
+          }).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          }).then(() => {
+            setAnalyzing(false)
+          })
+        }
+
+        const applyOne = (kind, id) => {
+          const target = styleStore.lastSessionId()
+          if (target === null) return Promise.reject(new Error(t.applyNoSession))
+          return styleStore.command(target, `/style ${kind} ${id}`)
+        }
+
+        const applyRecommendation = (kind, id) => {
+          setFailure(null)
+          applyOne(kind, id).then(() => setApplyNotice(t.applied)).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          })
+        }
+
+        const applyAll = () => {
+          setFailure(null)
+          applyOne('tone', tonePick).then(() => applyOne('output', outputPick)).then(() => setApplyNotice(t.applied)).catch((error) => {
+            setFailure(String((error && error.message) || error))
+          })
+        }
+
+        const recommendationCard = (kind, title, group, picked, setPicked) => h('div', { key: kind, className: 'dshstyle-rec-card' }, [
+          h('div', { key: 'title', className: 'dshstyle-rec-card-title' }, title),
+          h('div', { key: 'name', className: 'dshstyle-rec-name' }, group.recommended.name),
+          h('div', { key: 'reason', className: 'dshstyle-rec-reason' }, group.recommended.reason),
+          group.alternatives.length === 0 ? null : h('div', { key: 'alts', className: 'dshstyle-rec-alt' }, [
+            h('span', { key: 'label', className: 'dshstyle-rec-alt-label' }, t.altLabel),
+            ...group.alternatives.map((alt) => h('button', {
+              key: alt.id,
+              type: 'button',
+              className: 'dshstyle-chip',
+              'data-on': picked === alt.id ? '1' : undefined,
+              title: alt.reason,
+              onClick: () => setPicked(alt.id),
+            }, alt.name)),
+          ]),
+        ])
+
+        const recommendPanel = h('div', { className: 'dshstyle-rec' }, [
+          h('div', { key: 'intro', className: 'dshstyle-settings-intro' }, t.recommendIntro),
+          h('label', { key: 'content', className: 'dshstyle-field' }, [
+            h('span', { key: 'label', className: 'dshstyle-field-label' }, t.contentLabel),
+            h('textarea', {
+              key: 'input',
+              className: 'dshstyle-textarea',
+              value: recommendForm.content,
+              placeholder: t.contentPlaceholder,
+              onChange: (event) => setRecommendForm({ ...recommendForm, content: event.target.value.slice(0, 8000) }),
+            }),
+          ]),
+          h('div', { key: 'hint', className: 'dshstyle-rec-hint' }, t.contentHint),
+          h('div', { key: 'grid', className: 'dshstyle-rec-grid' }, [
+            h('label', { key: 'stage', className: 'dshstyle-field' }, [
+              h('span', { key: 'label', className: 'dshstyle-field-label' }, t.stageLabel),
+              h('select', {
+                key: 'select',
+                className: 'dshstyle-input',
+                value: recommendForm.stage,
+                onChange: (event) => setRecommendForm({ ...recommendForm, stage: event.target.value }),
+              }, [h('option', { key: 'auto', value: '' }, t.stageAuto)].concat(RECOMMEND_STAGES.map((stage) => h('option', { key: stage.id, value: stage.id }, stage.label)))),
+            ]),
+            h('label', { key: 'audience', className: 'dshstyle-field' }, [
+              h('span', { key: 'label', className: 'dshstyle-field-label' }, t.audienceLabel),
+              h('input', {
+                key: 'input', className: 'dshstyle-input', value: recommendForm.audience,
+                placeholder: t.audiencePlaceholder,
+                onChange: (event) => setRecommendForm({ ...recommendForm, audience: event.target.value.slice(0, 1000) }),
+              }),
+            ]),
+            h('label', { key: 'inputs', className: 'dshstyle-field' }, [
+              h('span', { key: 'label', className: 'dshstyle-field-label' }, t.inputsLabel),
+              h('input', {
+                key: 'input', className: 'dshstyle-input', value: recommendForm.inputs,
+                placeholder: t.inputsPlaceholder,
+                onChange: (event) => setRecommendForm({ ...recommendForm, inputs: event.target.value.slice(0, 2000) }),
+              }),
+            ]),
+            h('label', { key: 'outputs', className: 'dshstyle-field' }, [
+              h('span', { key: 'label', className: 'dshstyle-field-label' }, t.outputsLabel),
+              h('input', {
+                key: 'input', className: 'dshstyle-input', value: recommendForm.outputs,
+                placeholder: t.outputsPlaceholder,
+                onChange: (event) => setRecommendForm({ ...recommendForm, outputs: event.target.value.slice(0, 2000) }),
+              }),
+            ]),
+            h('label', { key: 'constraints', className: 'dshstyle-field dshstyle-rec-wide' }, [
+              h('span', { key: 'label', className: 'dshstyle-field-label' }, t.constraintsLabel),
+              h('input', {
+                key: 'input', className: 'dshstyle-input', value: recommendForm.constraints,
+                placeholder: t.constraintsPlaceholder,
+                onChange: (event) => setRecommendForm({ ...recommendForm, constraints: event.target.value.slice(0, 2000) }),
+              }),
+            ]),
+          ]),
+          h('div', { key: 'actions', className: 'dshstyle-form-foot' }, [
+            h('button', { key: 'rules', type: 'button', className: 'dshstyle-btn', 'data-primary': '1', disabled: analyzing, onClick: () => runAnalysis('rules') }, t.analyzeRules),
+            h('button', { key: 'ai', type: 'button', className: 'dshstyle-btn', disabled: analyzing, onClick: () => runAnalysis('ai') }, analyzing ? t.analyzing : t.analyzeAi),
+            h('span', { key: 'spacer', className: 'dshstyle-spacer' }),
+            failure === null ? null : h('span', { key: 'error', className: 'dshstyle-error' }, failure),
+          ]),
+          analysis === null ? null : h('div', { key: 'result', className: 'dshstyle-rec-result' }, [
+            analysis.warning ? h('div', { key: 'warning', className: 'dshstyle-error' }, analysis.warning) : null,
+            h('div', { key: 'stage', className: 'dshstyle-rec-stage' }, [
+              h('span', { key: 'badge', className: 'dshstyle-badge' }, analysis.stage.label),
+              h('span', { key: 'role', className: 'dshstyle-rec-role' }, analysis.stageRole),
+            ]),
+            h('div', { key: 'io', className: 'dshstyle-rec-io' }, [
+              h('div', { key: 'in' }, `${t.recommendInput}：${analysis.io.input}`),
+              h('div', { key: 'out' }, `${t.recommendOutput}：${analysis.io.output}`),
+            ]),
+            h('div', { key: 'cards', className: 'dshstyle-rec-cards' }, [
+              recommendationCard('tone', t.recommendTone, analysis.tone, tonePick, setTonePick),
+              recommendationCard('output', t.recommendOutputForm, analysis.output, outputPick, setOutputPick),
+            ]),
+            analysis.notes !== undefined && analysis.notes.length > 0
+              ? h('div', { key: 'notes' }, [
+                h('div', { key: 'title', className: 'dshstyle-rec-card-title' }, t.recommendNotes),
+                h('ul', { key: 'list', className: 'dshstyle-rec-notes' }, analysis.notes.map((note, index) => h('li', { key: index }, note))),
+              ])
+              : null,
+            h('div', { key: 'apply', className: 'dshstyle-rec-actions' }, [
+              h('button', { key: 'toneApply', type: 'button', className: 'dshstyle-btn', disabled: tonePick === null, onClick: () => applyRecommendation('tone', tonePick) }, t.applyTone),
+              h('button', { key: 'outputApply', type: 'button', className: 'dshstyle-btn', disabled: outputPick === null, onClick: () => applyRecommendation('output', outputPick) }, t.applyOutput),
+              h('button', { key: 'allApply', type: 'button', className: 'dshstyle-btn', 'data-primary': '1', disabled: tonePick === null || outputPick === null, onClick: applyAll }, t.applyAll),
+              applyNotice === null ? null : h('span', { key: 'notice', className: 'dshstyle-notice' }, applyNotice),
+            ]),
+          ]),
+        ])
+
         const rows = library.map((preset) => h('div', { key: preset.id, className: 'dshstyle-row' }, [
           h('div', { key: 'main', className: 'dshstyle-row-main' }, [
             h('div', { key: 'name', className: 'dshstyle-row-name' }, [
@@ -1167,7 +1427,14 @@ window.__ModuleLoader__.load({
               key: 'output', type: 'button', className: 'dshstyle-tab', 'data-on': tab === 'output' ? '1' : undefined,
               onClick: () => setTab('output'),
             }, t.settingsOutput),
+            h('button', {
+              key: 'recommend', type: 'button', className: 'dshstyle-tab', 'data-on': tab === 'recommend' ? '1' : undefined,
+              onClick: () => setTab('recommend'),
+            }, t.tabRecommend),
           ]),
+          tab === 'recommend'
+            ? recommendPanel
+            : h(React.Fragment, null, [
           h('div', { key: 'actions', className: 'dshstyle-form-foot' }, [
             h('button', {
               key: 'add', type: 'button', className: 'dshstyle-btn', 'data-primary': '1', disabled: busy,
@@ -1195,6 +1462,7 @@ window.__ModuleLoader__.load({
               : h('div', { key: 'rows', className: 'dshstyle-rows' }, rows),
           form,
           h('div', { key: 'note', className: 'dshstyle-hint' }, t.builtinNote),
+            ]),
         ])
       }
 

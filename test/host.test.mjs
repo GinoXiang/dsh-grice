@@ -236,6 +236,7 @@ test('the host declares the storage domain and registers the projection and sect
     assert.equal(services.projections[0].stateVersion, 1)
     assert.deepEqual(services.sections.map((section) => section.name), ['style:policy', 'style:tone', 'style:output'])
     assert.deepEqual([...services.routes.keys()].sort(), [
+      '/dsh-output-style/analyze',
       '/dsh-output-style/presets',
       '/dsh-output-style/presets/delete',
       '/dsh-output-style/presets/import',
@@ -409,6 +410,44 @@ test('markdown preset files are loaded, skipped when malformed, and served to th
     assert.equal(custom.prompt, '先给结论，再给依据。')
     assert.equal(listed.body.presets.tones.some((preset) => preset.id === 'broken'), false)
     assert.ok(listed.body.presets.tones.some((preset) => preset.id === 'grice' && preset.builtin === true))
+    ctx.dispose()
+  })
+})
+
+test('the analyze route returns a rules recommendation and degrades AI to rules', async () => {
+  await withHome('analyze', async () => {
+    const { services, ctx } = await boot()
+    const route = services.routes.get('/dsh-output-style/analyze')
+    assert.ok(route, 'the analyze route is registered')
+
+    const rules = await callRoute(route, {
+      mode: 'rules',
+      input: {
+        content: '整理上季度客服退款数据，找出三个主因，周五给运营负责人做两页汇报',
+        outputs: '报告',
+        audience: '运营负责人',
+        constraints: '两页以内',
+      },
+    })
+    assert.equal(rules.status, 200)
+    const analysis = rules.body.analysis
+    assert.equal(analysis.source, 'rules')
+    assert.ok(analysis.stageRole.length > 0)
+    assert.ok(analysis.io.input.length > 0)
+    assert.ok(analysis.io.output.length > 0)
+    assert.ok(analysis.tone.recommended.id.length > 0)
+    assert.ok(analysis.output.recommended.id.length > 0)
+    assert.ok(analysis.tone.recommended.reason.length > 0)
+
+    // Without an llm service the AI layer degrades to the rules result plus a warning.
+    const ai = await callRoute(route, { mode: 'ai', input: { content: '实现一个脚本修复报错' } })
+    assert.equal(ai.status, 200)
+    assert.equal(ai.body.analysis.source, 'rules')
+    assert.match(ai.body.analysis.warning, /AI 分析不可用/)
+
+    // A missing work description is rejected before any analysis.
+    const empty = await callRoute(route, { mode: 'rules', input: { content: '' } })
+    assert.equal(empty.status, 400)
     ctx.dispose()
   })
 })

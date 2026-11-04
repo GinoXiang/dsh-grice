@@ -131,6 +131,11 @@ test('the bundle registers the merged tone control, the output dropdown, and the
   const listing = commandView.component({ node: { args: '', outcome: { kind: 'success', text: '基调开关：开' } } })
   assert.ok(listing && Array.isArray(listing.args), 'the status listing renders a row')
   assert.equal(commandView.component({ node: { args: ' nope', outcome: { kind: 'error', text: '没有 tone 预设' } } }).args[0], 'div')
+  const settingsEntry = ctx.registered.find((entry) => entry.options.name === 'settings.section')
+  const settingsTree = settingsEntry.component({})
+  assert.ok(settingsTree, 'the settings panel renders')
+  assert.match(JSON.stringify(settingsTree), /智能推荐/, 'the recommendation tab is part of the panel')
+
   const settings = ctx.registered.find((entry) => entry.options.name === 'settings.section').options
   assert.equal(settings.id, 'dsh-output-style')
   assert.equal(typeof settings.label, 'function')
@@ -145,7 +150,7 @@ test('the bundle registers the merged tone control, the output dropdown, and the
 
 test('the bundle reads the session projection and keeps only the settings routes', async () => {
   const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('../client.js', import.meta.url), 'utf8'))
-  for (const route of ['/presets', '/presets/save', '/presets/delete', '/presets/reset', '/presets/import']) {
+  for (const route of ['/presets', '/presets/save', '/presets/delete', '/presets/reset', '/presets/import', '/analyze']) {
     assert.match(source, new RegExp(`'${route}'`))
   }
   // Session state comes from the host projection, not a polling endpoint.

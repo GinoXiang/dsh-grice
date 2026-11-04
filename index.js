@@ -23,11 +23,14 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+/** Analyzer module, loaded per plugin reload (see loadAnalyzer). */
+let analyzeEngine
 
 export const name = 'dsh-output-style'
 
 /** Plugin version, also recorded by the browser half's mount beacon. */
-const VERSION = '0.4.0'
+const VERSION = '0.5.0'
 /** HTTP route prefix owned by this plugin (the settings CRUD surface only). */
 const ROUTE_PREFIX = '/dsh-output-style'
 /** Directory under the DSH home that holds this plugin's durable files. */
@@ -990,6 +993,125 @@ function registerPrompt(sp, fiber, store, presets) {
   }))
 }
 
+// --- recommendation (settings page "智能推荐") --------------------------------
+
+/**
+ * Load the analyzer with an mtime-bearing query. A host reload (disable/enable
+ * or HMR) reinstantiates the plugin, and the query makes the fresh analyzer run
+ * instead of the process-wide ESM cache.
+ * @returns the analyzer module namespace.
+ */
+async function loadAnalyzer() {
+  const url = new URL('./analyze.js', import.meta.url)
+  const stat = await fs.promises.stat(fileURLToPath(url))
+  return import(`${url.href}?v=${stat.mtimeMs}`)
+}
+
+/** Absolute path of the shipped task-analysis guide used by the AI layer. */
+const ANALYSIS_GUIDE_FILE = fileURLToPath(new URL('./analysis-guide.md', import.meta.url))
+/** Loaded lazily; an unreadable guide degrades to the rules layer only. */
+let analysisGuideText
+function analysisGuide() {
+  if (analysisGuideText === undefined) {
+    try {
+      analysisGuideText = fs.readFileSync(ANALYSIS_GUIDE_FILE, 'utf8')
+    } catch {
+      analysisGuideText = ''
+    }
+  }
+  return analysisGuideText
+}
+
+/** Compact preset projection for prompts and rules. */
+function compactPresets(presets) {
+  const list = presets.list()
+  const compact = (entries) => (Array.isArray(entries) ? entries : []).map((preset) => ({ id: preset.id, name: preset.name }))
+  return { tones: compact(list.tones), outputs: compact(list.outputs) }
+}
+
+/** Validate and bound the analysis form coming from the settings page. */
+function normalizeAnalyzeInput(body) {
+  const input = body !== null && typeof body === 'object' ? body : {}
+  const read = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '')
+  const normalized = {
+    content: read(input.content, 8000),
+    stage: read(input.stage, 40),
+    inputs: read(input.inputs, 2000),
+    outputs: read(input.outputs, 2000),
+    audience: read(input.audience, 1000),
+    constraints: read(input.constraints, 2000),
+  }
+  if (normalized.content === '') throw new HttpError(400, 'invalid', '请先填写工作内容与目标')
+  return normalized
+}
+
+/**
+ * Layer B: one LLM call over the default model, embedding the shipped task
+ * analysis guide and the rules result as a prior. Throws on any failure so the
+ * route can fall back to the rules result.
+ * @param fiber - the webServer-injected scope, used to reach optional services.
+ * @param input - the normalized form.
+ * @param presets - compact preset lists.
+ * @param fallback - the rules result.
+ * @returns the AI analysis in the shared result shape.
+ */
+async function analyzeWithAi(fiber, input, presets, fallback) {
+  const llm = fiber.get('llm')
+  if (llm === null || llm === undefined || typeof llm.stream !== 'function') {
+    throw new Error('AI 分析需要 llm 服务，当前组合未提供')
+  }
+  const defaults = fiber.get('agentDefaultModel')
+  const selection = defaults !== null && defaults !== undefined && typeof defaults.currentSelection === 'function'
+    ? defaults.currentSelection()
+    : undefined
+  if (selection === null || selection === undefined || typeof selection.provider !== 'string' || typeof selection.model !== 'string') {
+    throw new Error('没有可用的默认模型，请先在设置里选择模型')
+  }
+  const messages = analyzeEngine.buildAiMessages(input, analysisGuide(), presets.tones, presets.outputs, fallback)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60000)
+  let text = ''
+  let finish
+  const chunkTypes = {}
+  try {
+    for await (const chunk of llm.stream({
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+      system: messages.system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: messages.user }] }],
+      temperature: 0.2,
+      maxTokens: 3000,
+      signal: controller.signal,
+    })) {
+      if (chunk === null || typeof chunk !== 'object') continue
+      chunkTypes[chunk.type] = (chunkTypes[chunk.type] ?? 0) + 1
+      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+      if (chunk.type === 'finish') {
+        finish = chunk.reason
+        break
+      }
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+  if (finish !== undefined && finish !== null && finish.kind !== 'stop' && finish.kind !== 'max-tokens') {
+    const failure = finish.failure
+    throw new Error(failure !== undefined && typeof failure.message === 'string' ? failure.message : '模型调用失败')
+  }
+  if (text.trim() === '') {
+    const shape = JSON.stringify({ finish: finish === undefined ? null : finish.kind, chunks: chunkTypes })
+    throw new Error(`模型没有返回文本（${shape}）`)
+  }
+  const payload = analyzeEngine.parseAiPayload(text)
+  const result = payload === undefined ? undefined : analyzeEngine.normalizeAiResult(payload, presets.tones, presets.outputs, fallback)
+  if (result === undefined) {
+    const shape = JSON.stringify({ finish: finish === undefined ? null : finish.kind, length: text.length })
+    throw new Error(`模型返回的分析格式无法解析或输出被截断（${shape}，前 120 字：${text.slice(0, 120)}）`)
+  }
+  return result
+}
+
 // --- HTTP routes -------------------------------------------------------------
 
 function isLoopbackAddress(address) {
@@ -1069,7 +1191,7 @@ function requireKind(body) {
   return kind
 }
 
-function routeHandler(run) {
+function routeHandler(run, context) {
   return async (req, res) => {
     if (!guard(req, res)) return
     if (req.method !== 'POST') {
@@ -1078,7 +1200,7 @@ function routeHandler(run) {
     }
     try {
       const body = await readJsonBody(req)
-      sendJson(res, 200, { ok: true, ...await run(body) })
+      sendJson(res, 200, { ok: true, ...await run(body, context) })
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500
       const code = error instanceof HttpError ? error.code : 'internal'
@@ -1128,6 +1250,22 @@ function registerRoutes(webServer, fiber, presets) {
       const kind = requireKind(body)
       return { ...presets.importMany(kind, body.presets), kind }
     }),
+  }))
+  fiber.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/analyze`,
+    handler: routeHandler(async (body, injected) => {
+      if (analyzeEngine === undefined) throw new HttpError(503, 'unavailable', '分析器尚未加载完成')
+      const input = normalizeAnalyzeInput(body.input)
+      const compact = compactPresets(presets)
+      const fallback = analyzeEngine.analyzeRules(input, compact.tones, compact.outputs)
+      if (body.mode !== 'ai') return { analysis: fallback }
+      try {
+        return { analysis: await analyzeWithAi(injected, input, compact, fallback) }
+      } catch (error) {
+        return { analysis: { ...fallback, warning: `AI 分析不可用：${String((error && error.message) || error)}` } }
+      }
+    }, fiber),
   }))
   fiber.effect(() => webServer.register({
     kind: 'exact',
@@ -1316,6 +1454,12 @@ export async function apply(ctx) {
   if (table === undefined) return
   const store = createStore(table)
   const presets = createPresetStore(ctx)
+  try {
+    analyzeEngine = await loadAnalyzer()
+  } catch (error) {
+    ctx.logger?.warn?.('dsh-output-style: analyzer could not be loaded: %s', String((error && error.message) || error))
+    analyzeEngine = undefined
+  }
   registerProjection(ctx, store, presets)
 
   ctx.inject(['systemPrompt'], (sub) => registerPrompt(sub.systemPrompt, sub, store, presets))
