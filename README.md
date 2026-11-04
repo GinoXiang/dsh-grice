@@ -21,9 +21,17 @@ DSH 输入框里有两个**分体控件**（开关 + 菜单），作用域都是
 
 - 内置 **7 个沟通/思考基调**：格赖斯·高效、教练引导、严谨审阅、创意发散、极简结论、苏格拉底追问、均衡自然。
 - 内置 **7 个产出形态**：代码实现、数据分析、文档写作、翻译、总结提炼、教学解释、方案对比。
+- **预设就是 Markdown 文件**，放在 `<DSH_HOME>/output-style/presets/tone/*.md` 与 `.../presets/output/*.md`；插件用 `fs.watch` 热重载，改文件即生效：
+  ```markdown
+  ---
+  name: "家庭风格"
+  pinned: true
+  ---
+  先给结论，再给依据……
+  ```
 - 菜单每组显示置顶的前 5 条 + **「更多…」**（展开全部）。
-- **设置 → 输出风格**：两个 tab 管理预设 —— 新增、编辑、删除、置顶（前 5 条）、恢复默认；单条提示词上限 2000 字符。
-- 内置预设也可改可删；「恢复默认」会把该分类还原成出厂预设。
+- **设置 → 输出风格**：两个 tab 管理预设 —— 新增、编辑、删除、置顶（前 5 条）、恢复默认；底层直接读写上面的 Markdown 文件；单条提示词上限 2000 字符。
+- 内置预设也以文件形式存在，可改可删；「恢复默认」会重写该分类的出厂文件。
 
 ## 提示词注入
 
@@ -38,7 +46,9 @@ style:output   (order 660)  ← 产出开关开、且选了产出形态时注入
 
 - 两个开关分别控制自己的 section：基调关 → policy/tone 为空；产出关 → output 为空。
 - 每个 step 的 assembly 都会重新求值，**切换后同一轮的下一个 step 就生效**，不需要新会话。
-- 状态按 Session 存：`<DSH_HOME>/output-style/state.json`（`{toneEnabled, tone, output, outputEnabled}`）；预设库是全局的：`<DSH_HOME>/output-style/presets.json`。
+- 状态按 Session 存进 DSH 官方的 **storage domain**（`output_style_pair`），浏览器通过 **session projection**（`outputStylePair`）订阅，不再有自定义 HTTP 状态接口和轮询：
+  - 持久化：`<DSH_HOME>/storages/output_style_pair.json`（由 DSH 存储后端管理）
+  - 浏览器写入：执行 `/style` 命令（与键盘操作同一条 `command/run`→`command/done` 生命周期）
 - 删除正在使用的预设 → 该会话自动回退（基调回内置格赖斯、产出回无），不会报错。
 
 ## 使用
@@ -78,6 +88,15 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\plugins\dsh-output-style" -T
 dsh plugin --profile <你的 profile> add "link:C:/Users/<you>/plugins/dsh-output-style"
 ```
 
+### 升级到 0.4.0（状态架构 + Markdown 预设）
+
+0.4.0 起会话状态改存 DSH 官方 storage domain，预设改存 Markdown 文件；旧数据**首次启动自动迁移**：
+
+- `<DSH_HOME>/output-style/state.json` → 存储域 `output_style_pair`（旧文件重命名为 `state.json.migrated`）
+- `<DSH_HOME>/output-style/presets.json` → `<DSH_HOME>/output-style/presets/{tone,output}/*.md`（旧文件重命名为 `presets.json.migrated`）
+- 预设目录可随时用任意编辑器改，插件热重载；`/style` 命令与设置页行为不变
+- 浏览器端不再轮询：旧页面需要刷新一次（HMR 会自动重载 client bundle）
+
 ### 从旧名 `dsh-grice` 升级
 
 插件在 0.3.0 改名为 `dsh-output-style`。旧状态目录 `<DSH_HOME>/grice/` 会在首次启动时自动复制到
@@ -109,9 +128,9 @@ dsh plugin --profile <你的 profile> remove dsh-output-style
 dsh-output-style/
 ├── package.json              # dsh.bundle.patch + dsh.client（platform: web）
 ├── cordis.patch.yml          # insert: id=dsh-output-style, name=dsh-output-style
-├── index.js                  # Host：会话状态 + 预设库 + 三个提示词 section + HTTP 路由 + /style 命令
-├── client.js                 # 浏览器：两个分体控件（开关 + 菜单）、设置页（settings.section）
-├── test/host.test.mjs        # Host 行为测试（node:test，无依赖）
+├── index.js                  # Host：storage domain 状态 + Markdown 预设库 + 三个 prompt section + projection + /style + 预设设置路由
+├── client.js                 # 浏览器：两个分体控件（订阅 projection + 执行 /style 命令）、设置页（settings.section）
+├── test/host.test.mjs        # Host 行为测试（node:test，无依赖；假 storageDomain / sessionProjections）
 ├── test/client.test.mjs      # 浏览器注册测试（假 window.__ModuleLoader__ + 假 ctx）
 ├── docs/composer.png         # 输入框两个控件实拍
 ├── docs/tone-menu.png        # 沟通基调菜单实拍
@@ -122,16 +141,19 @@ dsh-output-style/
 
 Host 半边（`index.js`）：
 
-- `createStore(ctx)` — `<DSH_HOME>/output-style/state.json`，会话 v3 结构 `{ toneEnabled, tone, output, outputEnabled }`，v1/v2 与旧字段自动迁移；mtime 缓存 + 原子写。
-- `createPresetStore(ctx)` — `<DSH_HOME>/output-style/presets.json`，内置预设播种、正常化、置顶上限 5、恢复默认。
+- `apply(ctx)`（async，`inject = ['storageDomain']`）— 打开 storage domain `output_style_pair`（表 `selection`，按 Session id 存 `{ toneEnabled, tone, output, outputEnabled }`），首次启动迁移旧 `state.json` 与 `grice/` 目录，并把 `presets.json` 迁成 Markdown 文件。
+- `createStore(table)` — 会话开关/选择的读写；`get` 同步、`put/delete` 等持久化完成才返回。
+- `createPresetStore(ctx)` — Markdown 预设库（`<DSH_HOME>/output-style/presets/{tone,output}/*.md`）；frontmatter `name`/`pinned`，body 为提示词；`fs.watch` 250ms 防抖热重载；置顶上限 5、恢复默认；文件损坏跳过并告警。
+- `registerProjection` — 注册 `outputStylePair` session projection：折叠 `/style` 的 `command/run`→`command/done`，视图从 domain 读取真实状态 + 两个紧凑预设列表；浏览器通过 `sessions.binding().session.projections.faceOf()` 订阅。
 - `registerPrompt` — 三个 section 的动态 provider，按 `assembly.agent.session.id` 查当前会话选择；基调与产出各由自己的开关控制。
-- `registerRoutes` — `/dsh-output-style/*`：`state` / `toggle` / `set` / `toggle-output` / `set-output` / `select` / `presets` / `presets/save` / `presets/delete` / `presets/reset`，回环 socket + 回环 Host + 同源 Origin 三道校验。
-- `registerCommand` — `/style [on|off|output on|output off|tone <id>|output <id>]`。
+- `registerRoutes` — 仅剩设置页预设 CRUD：`/dsh-output-style/presets`、`presets/save`、`presets/delete`、`presets/reset`；回环 socket + 回环 Host + 同源 Origin 三道校验。
+- `registerCommand` — `/style [on|off|output on|output off|tone <id>|output <id>]`，是浏览器与键盘共用的唯一写入路径。
 
 浏览器半边（`client.js`）：
 
 - 经典 client bundle 协议：`window.__ModuleLoader__.load({ id, factory })`，返回 `{ name, inject, apply }`。
-- 两个共享 store：按会话的开关/选择状态（轮询 + 订阅）、全局预设库；两个分体控件与设置页共用。
+- 会话状态来自 `outputStylePair` projection 的 `{ getSnapshot, subscribe }` face（`useSyncExternalStore`），**无轮询**；按钮通过 `remote.commands.execute`/`session.command()` 执行 `/style`，由命令生命周期与 projection 推送驱动 UI。
+- 预设菜单直接使用 projection 视图里的紧凑列表；设置页仍通过 4 个设置路由读写完整预设。
 - `conversation.input.left` 注册两个分体控件（`dsh-output-style` 120 = 基调开关+菜单；`dsh-output-style-output` 140 = 产出开关+菜单）；`settings.section` 注册「输出风格」设置页。
 
 ## 测试
@@ -147,23 +169,25 @@ npm test
 
 `node --test` 在部分 Windows 沙箱里会因测试 runner 派生子进程而报 EPERM，所以本仓库 README 使用直接运行的写法。
 
-覆盖：三 section 注入与互斥、两个独立开关、按会话隔离、预设库 CRUD / 置顶上限 / 恢复默认、删除回退、v1/v2→v3 与旧目录迁移、HTTP 三道校验、`/style` 命令、浏览器三个注册点与卸载清理。
+覆盖：三 section 注入与互斥、两个独立开关、按会话隔离、storage domain 记录与迁移（v1/v2 旧字段、旧 `grice/` 目录、`state.json`）、`outputStylePair` projection 折叠与 wire view、Markdown 预设加载/跳过损坏文件/CRUD/置顶上限/恢复默认、预设路由三道校验、`/style` 命令、浏览器三个注册点与卸载清理。
 
-运行中的实例可看 `<DSH_HOME>/output-style/state.json` 与 `presets.json`。
+运行中的实例可看 `<DSH_HOME>/storages/output_style_pair.json`（会话状态）与 `<DSH_HOME>/output-style/presets/`（预设文件）。
 
 ## 设计取舍
 
 - **两个分体控件、各自开关**：基调与产出是正交维度，各自有独立开关；小三角选中预设会自动打开它自己的开关，关掉某个开关只停用对应注入。
 - **基调替换而非叠加**：选了「教练引导」就不该再同时套着「格赖斯极简」，所以 tone 与内置 policy 互斥；产出形态是另一个维度，可叠加。
 - **预设库全局、选择按会话**：同一套预设在不同对话里复用，但每个对话的当前选择各自独立。
-- **Host 单写方**：浏览器只读/提交，避免多窗口状态漂移；`presets.json` 损坏时自动重新播种。
+- **用官方 seam，不自造协议**：会话状态走 `storageDomain`，浏览器视图走 session projection，写入走 `/style` 命令；删掉了自定义状态 HTTP 路由与 4s 轮询，多窗口/重连一致，状态可审计。
+- **预设文件化**：Markdown + frontmatter 是最低门槛的可编辑格式，用户用任意编辑器就能改、能分享、能进 git；设置页只是文件的图形外壳。
 
 ## 已知限制
 
-- 状态/预设文件都在 `<DSH_HOME>/output-style/`；删除 `presets.json` 会重新播种出厂预设。
-- `/dsh-output-style/*` 路由与 DSH 自带本地插件一样只监听回环地址，没有额外鉴权；不要在把 DSH 暴露到网络的部署里把它当安全边界。
+- 会话状态在 DSH 存储域（`<DSH_HOME>/storages/output_style_pair.json`），预设文件在 `<DSH_HOME>/output-style/presets/`；删除预设目录会重新播种出厂预设。
+- 写入依赖 `/style` 命令（浏览器端通过命令 Remote 执行），因此一个没有命令服务的 headless 组装无法从浏览器改状态；prompt 注入本身不受影响。
+- 旧 `state.json`/`presets.json` 只做一次性迁移，迁移后保留为 `*.migrated` 可手动删除。
+- 设置页的预设 CRUD 仍使用 4 个回环 HTTP 路由（DSH 目前没有插件自定义 RPC 机制）；与 DSH 自带本地插件一样只监听回环地址，没有额外鉴权，不要在把 DSH 暴露到网络的部署里把它当安全边界。
 - 本地 `link:` 安装时移动仓库路径会使 profile 依赖失效，需要重新 `add link:`。
-- 旧名 `dsh-grice` 的状态目录只做一次性复制迁移；旧目录可手动删除。
 
 ## License
 

@@ -1,13 +1,15 @@
 // dsh-output-style - browser half.
 //
 // Classic client bundle (client-modules protocol): register a factory with
-// window.__ModuleLoader__.load and return apply(). The composer carries three
-// independent controls — the Grice master switch, a tone preset dropdown, and
-// an output preset dropdown — and the settings page manages the preset library.
+// window.__ModuleLoader__.load and return apply(). The composer carries two
+// split controls — a tone switch with its preset menu and an output-form switch
+// with its preset menu — and the settings page manages the Markdown preset
+// library.
 //
-// The Host is the single writer: every control reads through `/dsh-output-style/state`
-// (shared, polled per Session) and submits through `/dsh-output-style/*`. A selection
-// made in either dropdown auto-enables the master switch, by Host rule.
+// Session state arrives through the Host's `outputStylePair` session projection
+// (subscribe on the projection face, no polling). Every write is a `/style`
+// command executed through the client command Remote, so the Host stays the
+// single writer and each switch keeps the durable command lifecycle.
 window.__ModuleLoader__.load({
   id: 'dsh-output-style',
   factory: (require) => {
@@ -16,9 +18,19 @@ window.__ModuleLoader__.load({
 
     const NS = 'dsh-output-style'
     const ROUTE = '/dsh-output-style'
-    const VERSION = '0.3.1'
-    /** How often an idle control re-reads the Host state (cheap local POST). */
-    const POLL_MS = 4000
+    const VERSION = '0.4.0'
+    /** Session projection carrying the live switch state (host-owned). */
+    const PROJECTION_KEY = 'outputStylePair'
+    /** The wire shape a missing projection reads as; identity-stable for React. */
+    const EMPTY_STYLE = Object.freeze({
+      status: 'loading',
+      enabled: false,
+      outputEnabled: false,
+      tone: null,
+      output: null,
+      tones: [],
+      outputs: [],
+    })
 
     const zh = {
       panel: '输出风格',
@@ -282,87 +294,154 @@ window.__ModuleLoader__.load({
       }, h('path', { d: 'M3.4 8.4 6.4 11.2 12.6 4.8' }))
     }
 
-    /** Per-Session switch surface shared by every composer control. */
-    function createSessionStore() {
+    /**
+     * Per-Session switch surface shared by every composer control. The Host
+     * pushes the `outputStylePair` session projection, so this store subscribes
+     * to that face instead of polling a route; commands are the write path
+     * (exactly the `/style` lifecycle the keyboard uses).
+     * @param sessions - the client `sessions` service, when composed.
+     * @param remote - the client `remote` service, used as the command fallback.
+     */
+    function createSessionStore(sessions, remote) {
       const records = new Map()
 
       function recordOf(sessionId) {
         let record = records.get(sessionId)
         if (record === undefined) {
           record = {
-            snapshot: { status: 'loading', enabled: false, outputEnabled: false, tone: null, output: null },
+            sessionId,
+            snapshot: EMPTY_STYLE,
             listeners: new Set(),
-            timer: null,
-            loaded: false,
-            pending: null,
+            face: null,
+            faceOff: null,
+            listOff: null,
           }
           records.set(sessionId, record)
         }
         return record
       }
 
-      function publish(record, patch) {
-        record.snapshot = { ...record.snapshot, ...patch }
+      function publish(record) {
+        let next = EMPTY_STYLE
+        try {
+          const raw = record.face === null ? undefined : record.face.getSnapshot()
+          if (raw !== null && typeof raw === 'object') {
+            next = {
+              status: 'ready',
+              enabled: raw.enabled === true,
+              outputEnabled: raw.outputEnabled === true,
+              tone: typeof raw.tone === 'string' ? raw.tone : null,
+              output: typeof raw.output === 'string' ? raw.output : null,
+              tones: Array.isArray(raw.tones) ? raw.tones : [],
+              outputs: Array.isArray(raw.outputs) ? raw.outputs : [],
+            }
+          }
+        } catch {
+          next = EMPTY_STYLE
+        }
+        record.snapshot = next
         for (const listener of record.listeners) listener()
       }
 
-      function read(sessionId, hello) {
-        const record = recordOf(sessionId)
-        if (record.pending !== null) return record.pending
-        if (record.loaded && hello !== true) return Promise.resolve(record.snapshot)
-        record.pending = post('/state', hello === true
-          ? { sessionId, hello: true, version: VERSION }
-          : { sessionId }).then((data) => {
-          record.pending = null
-          record.loaded = true
-          publish(record, {
-            status: 'ready',
-            enabled: data.enabled === true,
-            outputEnabled: data.outputEnabled === true,
-            tone: typeof data.tone === 'string' ? data.tone : null,
-            output: typeof data.output === 'string' ? data.output : null,
-          })
-          return record.snapshot
-        }).catch((error) => {
-          record.pending = null
-          publish(record, { status: 'error', error: String((error && error.message) || error) })
-          return record.snapshot
-        })
-        return record.pending
+      function unwatchList(record) {
+        if (record.listOff === null) return
+        try {
+          record.listOff()
+        } catch {
+          // A disposed sessions service already dropped the subscription.
+        }
+        record.listOff = null
+      }
+
+      /** Retry binding when the session materializes later (the slot may render first). */
+      function watchList(record) {
+        if (record.listOff !== null || sessions === null || sessions === undefined) return
+        const list = sessions.list
+        if (list === null || list === undefined || typeof list.subscribe !== 'function') return
+        try {
+          record.listOff = list.subscribe(() => bind(record))
+        } catch {
+          record.listOff = null
+        }
+      }
+
+      function bind(record) {
+        if (record.face !== null) return
+        if (sessions === null || sessions === undefined || typeof sessions.binding !== 'function') return
+        let binding
+        try {
+          binding = sessions.binding(record.sessionId)
+        } catch {
+          binding = undefined
+        }
+        const projections = binding !== null && typeof binding === 'object' && binding.session !== null && typeof binding.session === 'object'
+          ? binding.session.projections
+          : undefined
+        const face = projections !== null && typeof projections === 'object' && typeof projections.faceOf === 'function'
+          ? projections.faceOf(PROJECTION_KEY)
+          : undefined
+        if (face === null || face === undefined || typeof face.getSnapshot !== 'function') {
+          watchList(record)
+          return
+        }
+        record.face = face
+        unwatchList(record)
+        if (typeof face.subscribe === 'function') {
+          try {
+            record.faceOff = face.subscribe(() => publish(record))
+          } catch {
+            record.faceOff = null
+          }
+        }
+        publish(record)
+      }
+
+      function release(record) {
+        if (record.faceOff !== null) {
+          try {
+            record.faceOff()
+          } catch {
+            // The face was disposed with its session.
+          }
+          record.faceOff = null
+        }
+        record.face = null
+        unwatchList(record)
       }
 
       return {
         snapshotOf(sessionId) {
-          return recordOf(sessionId).snapshot
+          const record = recordOf(sessionId)
+          bind(record)
+          return record.snapshot
         },
         subscribe(sessionId, listener) {
           const record = recordOf(sessionId)
           record.listeners.add(listener)
-          if (record.timer === null) {
-            record.timer = setInterval(() => {
-              if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-              read(sessionId, false)
-            }, POLL_MS)
-          }
+          bind(record)
           return () => {
             record.listeners.delete(listener)
-            if (record.listeners.size === 0 && record.timer !== null) {
-              clearInterval(record.timer)
-              record.timer = null
-            }
+            if (record.listeners.size === 0) release(record)
           }
         },
-        apply(sessionId, payload) {
-          const record = recordOf(sessionId)
-          publish(record, {
-            status: 'ready',
-            enabled: payload.enabled === true,
-            outputEnabled: payload.outputEnabled === true,
-            tone: typeof payload.tone === 'string' ? payload.tone : null,
-            output: typeof payload.output === 'string' ? payload.output : null,
-          })
+        /**
+         * Run one `/style` line through the durable command lifecycle. The
+         * projection push that follows updates every subscribed control.
+         * @param sessionId - the session whose agent runs the command.
+         * @param line - full command line, leading slash included.
+         * @returns the command execution result.
+         */
+        async command(sessionId, line) {
+          if (remote !== null && remote !== undefined && remote.commands !== undefined && typeof remote.commands.execute === 'function') {
+            const result = await remote.commands.execute(sessionId, line, [])
+            if (result !== null && typeof result === 'object' && result.ok === false) {
+              const failure = result.error !== null && typeof result.error === 'object' ? result.error : {}
+              throw new Error(String(failure.message || failure.code || 'command failed'))
+            }
+            return result
+          }
+          throw new Error('this session cannot run commands yet')
         },
-        read,
       }
     }
 
@@ -426,7 +505,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const inject = ['slots']
+    const inject = ['slots', 'sessions']
 
     function apply(ctx) {
       const style = document.createElement('style')
@@ -473,7 +552,17 @@ window.__ModuleLoader__.load({
         return React.useMemo(() => dictionary(), [revision])
       }
 
-      const sessionStore = createSessionStore()
+      /** Optional client services: absent ones degrade to the render-safe fallbacks. */
+      function serviceOf(name) {
+        try {
+          return ctx.get(name)
+        } catch {
+          return undefined
+        }
+      }
+      const sessions = serviceOf('sessions')
+      const remote = serviceOf('remote')
+      const sessionStore = createSessionStore(sessions, remote)
       const presetStore = createPresetStore()
 
       function useSession(sessionId) {
@@ -482,16 +571,10 @@ window.__ModuleLoader__.load({
           [sessionId],
         )
         const getSnapshot = React.useCallback(
-          () => (isSessionId(sessionId)
-            ? sessionStore.snapshotOf(sessionId)
-            : { status: 'ready', enabled: false, outputEnabled: false, tone: null, output: null }),
+          () => (isSessionId(sessionId) ? sessionStore.snapshotOf(sessionId) : EMPTY_STYLE),
           [sessionId],
         )
-        const snapshot = React.useSyncExternalStore(subscribe, getSnapshot)
-        React.useEffect(() => {
-          if (isSessionId(sessionId)) sessionStore.read(sessionId, true)
-        }, [sessionId])
-        return snapshot
+        return React.useSyncExternalStore(subscribe, getSnapshot)
       }
 
       function usePresets() {
@@ -510,7 +593,6 @@ window.__ModuleLoader__.load({
         const t = useDictionary()
         const sessionId = props.sessionId
         const snapshot = useSession(sessionId)
-        const presets = usePresets()
         const [open, setOpen] = React.useState(false)
         const [expanded, setExpanded] = React.useState({ tone: false, output: false })
         const [position, setPosition] = React.useState({ left: 980, top: 880 })
@@ -552,19 +634,19 @@ window.__ModuleLoader__.load({
           if (busy || !isSessionId(sessionId)) return
           setBusy(true)
           setFailure(null)
-          post('/toggle', { sessionId }).then((data) => {
-            sessionStore.apply(sessionId, data)
-          }).catch((error) => {
+          sessionStore.command(sessionId, snapshot.enabled === true ? '/style off' : '/style on').catch((error) => {
             setFailure(String((error && error.message) || error))
           }).then(() => {
             setBusy(false)
           })
-        }, [busy, sessionId])
+        }, [busy, sessionId, snapshot.enabled])
 
         const choose = React.useCallback((kind, id) => {
           if (!isSessionId(sessionId)) return
-          post('/select', { sessionId, kind, id }).then((data) => {
-            sessionStore.apply(sessionId, data)
+          const line = id === null
+            ? `/style ${kind} none`
+            : `/style ${kind} ${id}`
+          sessionStore.command(sessionId, line).then(() => {
             close()
           }).catch((error) => {
             setFailure(String((error && error.message) || error))
@@ -573,8 +655,8 @@ window.__ModuleLoader__.load({
 
         if (!isSessionId(sessionId)) return null
 
-        const toneList = presets.tones
-        const outputList = presets.outputs
+        const toneList = snapshot.tones
+        const outputList = snapshot.outputs
         const toneId = snapshot.tone ?? 'grice'
         const tonePreset = toneList.find((preset) => preset.id === toneId)
         const outputPreset = outputList.find((preset) => preset.id === snapshot.output)
@@ -679,7 +761,6 @@ window.__ModuleLoader__.load({
         const t = useDictionary()
         const sessionId = props.sessionId
         const snapshot = useSession(sessionId)
-        const presets = usePresets()
         const [open, setOpen] = React.useState(false)
         const [expanded, setExpanded] = React.useState(false)
         const [position, setPosition] = React.useState(null)
@@ -719,8 +800,8 @@ window.__ModuleLoader__.load({
 
         const choose = React.useCallback((id) => {
           if (!isSessionId(sessionId)) return
-          post('/select', { sessionId, kind: 'output', id }).then((data) => {
-            sessionStore.apply(sessionId, data)
+          const line = id === null ? '/style output none' : `/style output ${id}`
+          sessionStore.command(sessionId, line).then(() => {
             close()
           }).catch((error) => {
             setFailure(String((error && error.message) || error))
@@ -731,18 +812,16 @@ window.__ModuleLoader__.load({
           if (busy || !isSessionId(sessionId)) return
           setBusy(true)
           setFailure(null)
-          post('/toggle-output', { sessionId }).then((data) => {
-            sessionStore.apply(sessionId, data)
-          }).catch((error) => {
+          sessionStore.command(sessionId, snapshot.outputEnabled === true ? '/style output off' : '/style output on').catch((error) => {
             setFailure(String((error && error.message) || error))
           }).then(() => {
             setBusy(false)
           })
-        }, [busy, sessionId])
+        }, [busy, sessionId, snapshot.outputEnabled])
 
         if (!isSessionId(sessionId)) return null
 
-        const library = presets.outputs
+        const library = snapshot.outputs
         const selected = library.find((preset) => preset.id === snapshot.output)
         const label = selected === undefined ? t.outputNone : selected.name
         const outputOn = snapshot.outputEnabled === true

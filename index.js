@@ -10,10 +10,13 @@
 //   * `style:output`  - a selected output-form preset (order 660), gated by its
 //     own switch so the tone switch and the output switch are independent.
 //
-// Preset definitions live in `<DSH_HOME>/output-style/presets.json` (one global
-// library, editable from the settings page); the per-Session selection lives
-// beside the two switches in `<DSH_HOME>/output-style/state.json`. The browser
-// half never owns state: it reads and submits, the Host is the single writer.
+// Preset definitions live as Markdown files under
+// `<DSH_HOME>/output-style/presets/{tone,output}/*.md` (one global library,
+// editable by any editor and from the settings page, hot-reloaded on change).
+// The per-Session selection lives in the official storage domain
+// `output_style_pair` and reaches the browser through the `outputStylePair`
+// session projection; the browser never owns state, the Host is the single
+// writer and writes only through the `/style` command lifecycle.
 //
 // The plugin imports nothing from the DSH SDK; every service is resolved
 // through the cordis context at call time.
@@ -24,11 +27,15 @@ import path from 'node:path'
 export const name = 'dsh-output-style'
 
 /** Plugin version, also recorded by the browser half's mount beacon. */
-const VERSION = '0.3.1'
-/** HTTP route prefix owned by this plugin. */
+const VERSION = '0.4.0'
+/** HTTP route prefix owned by this plugin (the settings CRUD surface only). */
 const ROUTE_PREFIX = '/dsh-output-style'
 /** Directory under the DSH home that holds this plugin's durable files. */
 const STATE_DIR = 'output-style'
+/** User preset directory: one markdown file per preset, watched for changes. */
+const PRESETS_DIR = 'presets'
+/** Coalescing delay for preset-file change events. */
+const WATCH_DEBOUNCE_MS = 250
 /** Pre-rename directory; migrated once, then left untouched. */
 const LEGACY_STATE_DIR = 'grice'
 /** Prompt sections owned by this plugin. */
@@ -38,7 +45,13 @@ const SECTION_OUTPUT = 'style:output'
 const ORDER_POLICY = 650
 const ORDER_TONE = 650
 const ORDER_OUTPUT = 660
-/** Durable formats. */
+/** Storage domain owned by this plugin: one selection record per Session. */
+const DOMAIN_NAME = 'output_style_pair'
+const DOMAIN_VERSION = 1
+/** Session-projection key carrying the live view the composer reads. */
+const PROJECTION_KEY = 'outputStylePair'
+const PROJECTION_STATE_VERSION = 1
+/** Legacy JSON state format, read once during migration into the domain. */
 const STATE_VERSION = 3
 const PRESETS_VERSION = 2
 /** Bounds. */
@@ -272,33 +285,7 @@ class HttpError extends Error {
   }
 }
 
-// --- atomic JSON storage -----------------------------------------------------
-
-function readJsonCached(file, ctx, label) {
-  let stat
-  try {
-    stat = fs.statSync(file)
-  } catch {
-    return { exists: false }
-  }
-  let raw
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch (error) {
-    ctx?.logger?.warn?.('dsh-output-style: ignored unreadable %s: %s', label, String((error && error.message) || error))
-    return { exists: true, broken: true }
-  }
-  return { exists: true, stat, raw }
-}
-
-function writeJson(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
-  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  fs.renameSync(temporary, file)
-}
-
-// --- per-session state -------------------------------------------------------
+// --- per-session state (official storage domain) -----------------------------
 
 const EMPTY_SESSION = Object.freeze({ toneEnabled: false, tone: null, output: null, outputEnabled: false })
 
@@ -313,6 +300,28 @@ function normalizeSession(raw) {
   const outputEnabled = raw.outputEnabled === true
     || (raw.outputEnabled === undefined && output !== null && toneEnabled)
   return { toneEnabled, tone, output, outputEnabled }
+}
+
+/** Validate one durable selection record (zod-shaped `.parse` for the domain table). */
+function parseSelectionRecord(raw) {
+  if (raw === null || typeof raw !== 'object') throw new Error('selection record must be an object')
+  const record = normalizeSession(raw)
+  if (!record.toneEnabled && record.tone === null && record.output === null && !record.outputEnabled) {
+    throw new Error('selection record carries no selection')
+  }
+  for (const value of [record.tone, record.output]) {
+    if (value !== null && (typeof value !== 'string' || value.length > MAX_PRESET_NAME_LENGTH)) {
+      throw new Error('selection record names an invalid preset')
+    }
+  }
+  return record
+}
+
+/** The storage-domain declaration; record schemas are zod-shaped (`parse`). */
+const DOMAIN_SPEC = {
+  name: DOMAIN_NAME,
+  version: DOMAIN_VERSION,
+  tables: { selection: { valueSchema: { parse: parseSelectionRecord } } },
 }
 
 function normalizeState(raw) {
@@ -353,68 +362,26 @@ function pruneSessions(state) {
 }
 
 /**
- * The switch store: one JSON file as the single source of truth, read through
- * an mtime/size cache so providers evaluated on every prompt assembly do not
- * re-read the disk, and written atomically so a crash cannot truncate it.
- * @param ctx - host context, for diagnostics only.
+ * The switch store over the official storage domain: reads are synchronous
+ * (the opened table keeps the loaded records in memory), writes are awaited so
+ * a settled command implies a durable record.
+ * @param table - the opened `selection` table handle.
  * @returns the store read and write surface.
  */
-function createStore(ctx) {
-  let cached
-  let cachedStamp
-
-  function load() {
-    const file = stateFile()
-    const read = readJsonCached(file, ctx, 'state file')
-    if (!read.exists) {
-      cached = normalizeState(undefined)
-      cachedStamp = undefined
-      return cached
-    }
-    if (cached !== undefined && cachedStamp !== undefined && read.stat !== undefined
-      && cachedStamp.mtimeMs === read.stat.mtimeMs && cachedStamp.size === read.stat.size) {
-      return cached
-    }
-    cached = normalizeState(read.broken ? undefined : read.raw)
-    cachedStamp = read.stat === undefined ? undefined : { mtimeMs: read.stat.mtimeMs, size: read.stat.size }
-    return cached
-  }
-
-  function save(next) {
-    const file = stateFile()
-    writeJson(file, next)
-    cached = next
-    try {
-      const stat = fs.statSync(file)
-      cachedStamp = { mtimeMs: stat.mtimeMs, size: stat.size }
-    } catch {
-      cachedStamp = undefined
-    }
-  }
-
-  /** Apply one mutation to a fresh copy of the state, then persist it. */
-  function update(mutate) {
-    const current = normalizeState(load())
-    const draft = {
-      ...current,
-      sessions: Object.fromEntries(Object.entries(current.sessions).map(([key, value]) => [key, { ...value }])),
-    }
-    mutate(draft)
-    for (const [key, value] of Object.entries(draft.sessions)) {
-      if (!value.toneEnabled && value.tone === null && value.output === null && !value.outputEnabled) delete draft.sessions[key]
-    }
-    pruneSessions(draft)
-    draft.version = STATE_VERSION
-    draft.updatedAt = new Date().toISOString()
-    save(draft)
-    return draft
+function createStore(table) {
+  async function write(sessionId, record) {
+    const empty = !record.toneEnabled && record.tone === null && record.output === null && !record.outputEnabled
+    if (empty) await table.delete(sessionId)
+    else await table.put(sessionId, { ...record })
+    return record
   }
 
   const store = {
     /** The effective per-Session state; a missing Session reads fully off. */
     session(sessionId) {
       if (typeof sessionId !== 'string' || sessionId === '') return { ...EMPTY_SESSION }
-      return { ...(load().sessions[sessionId] ?? EMPTY_SESSION) }
+      const stored = table.get(sessionId)
+      return stored === undefined ? { ...EMPTY_SESSION } : normalizeSession(stored)
     },
     /** Whether the master switch is on for this Session. */
     toneEnabled(sessionId) {
@@ -425,69 +392,95 @@ function createStore(ctx) {
       return store.session(sessionId).outputEnabled
     },
     /** Set the master switch; an empty Session id cannot be stored. */
-    setToneEnabled(sessionId, enabled) {
+    async setToneEnabled(sessionId, enabled) {
       const id = requireSessionIdValue(sessionId)
-      update((draft) => {
-        const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
-        draft.sessions[id] = { ...current, toneEnabled: enabled === true }
-      })
-      return store.session(id)
+      return write(id, { ...store.session(id), toneEnabled: enabled === true })
     },
     /** Set the independent output-form switch; an empty Session id cannot be stored. */
-    setOutputEnabled(sessionId, enabled) {
+    async setOutputEnabled(sessionId, enabled) {
       const id = requireSessionIdValue(sessionId)
-      update((draft) => {
-        const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
-        draft.sessions[id] = { ...current, outputEnabled: enabled === true }
-      })
-      return store.session(id)
+      return write(id, { ...store.session(id), outputEnabled: enabled === true })
     },
     /** Set one preset slot; `null` clears it. Selecting a preset also enables its own switch. */
-    setPreset(sessionId, kind, presetId) {
+    async setPreset(sessionId, kind, presetId) {
       const id = requireSessionIdValue(sessionId)
       if (!KINDS.includes(kind)) throw new HttpError(400, 'invalid', 'kind must be tone or output')
       const value = presetId === undefined || presetId === null ? null : String(presetId)
-      update((draft) => {
-        const current = draft.sessions[id] ?? { ...EMPTY_SESSION }
-        if (kind === 'tone') {
-          draft.sessions[id] = { ...current, toneEnabled: true, tone: value }
-          return
-        }
-        draft.sessions[id] = { ...current, outputEnabled: true, output: value }
-      })
-      return store.session(id)
+      const current = store.session(id)
+      return write(id, kind === 'tone'
+        ? { ...current, toneEnabled: true, tone: value }
+        : { ...current, outputEnabled: true, output: value })
     },
     /** Flip the master switch and return the new per-Session state. */
-    toggle(sessionId) {
+    async toggle(sessionId) {
       const id = requireSessionIdValue(sessionId)
-      const next = !store.toneEnabled(id)
-      return store.setToneEnabled(id, next)
+      return store.setToneEnabled(id, !store.toneEnabled(id))
     },
     /** Flip the output-form switch and return the new per-Session state. */
-    toggleOutput(sessionId) {
+    async toggleOutput(sessionId) {
       const id = requireSessionIdValue(sessionId)
-      const next = !store.outputEnabled(id)
-      return store.setOutputEnabled(id, next)
-    },
-    /** Record this process's activation, so the plugin's liveness is observable. */
-    markActivated() {
-      return update((draft) => {
-        draft.activatedAt = new Date().toISOString()
-        draft.activatedPid = process.pid
-      })
-    },
-    /** Record that a browser page mounted the switch; the client half's liveness beacon. */
-    noteClient(sessionId, version) {
-      update((draft) => {
-        draft.lastClientSeen = {
-          at: new Date().toISOString(),
-          sessionId: typeof sessionId === 'string' ? sessionId : null,
-          version: typeof version === 'string' ? version : null,
-        }
-      })
+      return store.setOutputEnabled(id, !store.outputEnabled(id))
     },
   }
   return store
+}
+
+/**
+ * Import the pre-domain JSON state once. The legacy file is renamed on success
+ * so a stale snapshot cannot re-import over newer domain records; a failed
+ * rename only costs a re-check on the next start, never a duplicate write.
+ * @param ctx - host context, for diagnostics.
+ * @param table - the opened `selection` table handle.
+ */
+async function migrateLegacyState(ctx, table) {
+  const file = stateFile()
+  let raw
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return
+  }
+  const legacy = normalizeState(raw)
+  pruneSessions(legacy)
+  let migrated = 0
+  for (const [sessionId, value] of Object.entries(legacy.sessions)) {
+    if (table.get(sessionId) !== undefined) continue
+    const record = normalizeSession(value)
+    if (!record.toneEnabled && record.tone === null && record.output === null && !record.outputEnabled) continue
+    await table.put(sessionId, record)
+    migrated += 1
+  }
+  try {
+    fs.renameSync(file, `${file}.migrated`)
+  } catch {
+    // Keeping the file is harmless: the per-record existence check above is idempotent.
+  }
+  if (migrated > 0) ctx?.logger?.info?.('dsh-output-style: migrated %d session selection(s) into domain %s', migrated, DOMAIN_NAME)
+}
+
+/**
+ * Open the plugin's selection domain, run the one-time migrations, and hand the
+ * `selection` table to the store. The domain close is owned by the plugin
+ * fiber's effect chain, registered before the open await.
+ * @param ctx - plugin fiber context.
+ * @param storageDomain - the injected `storageDomain` facility.
+ * @returns the opened table handle (undefined when the fiber died mid-open).
+ */
+async function openSelectionTable(ctx, storageDomain) {
+  let opened
+  ctx.effect(() => () => {
+    void opened?.close()
+  }, 'dsh-output-style: storage domain close')
+  const domain = await storageDomain.open(DOMAIN_SPEC)
+  if (ctx.fiber?.uid === null) {
+    await domain.close()
+    return undefined
+  }
+  opened = domain
+  migrateLegacyDir(ctx)
+  const table = domain.table('selection')
+  await migrateLegacyState(ctx, table)
+  return table
 }
 
 function requireSessionIdValue(value) {
@@ -539,42 +532,226 @@ function normalizePresets(raw) {
   return library
 }
 
+// --- markdown preset library ------------------------------------------------
+
+/** Absolute path of the user preset directory (one subdirectory per kind). */
+export function presetsDir() {
+  return path.join(dshHome(), STATE_DIR, PRESETS_DIR)
+}
+
+function presetKindDir(kind) {
+  return path.join(presetsDir(), kind)
+}
+
+function presetFilePath(kind, id) {
+  return path.join(presetKindDir(kind), `${id}.md`)
+}
+
+function presetBuiltinIds(kind) {
+  return new Set((DEFAULT_PRESETS[PRESET_KEY[kind]] ?? []).map((preset) => preset.id))
+}
+
+/** Serialize one preset as a markdown file: scalar frontmatter plus the prompt body. */
+function serializePreset(preset) {
+  const lines = ['---', `name: ${JSON.stringify(preset.name)}`, `pinned: ${preset.pinned === true}`, '---', '', preset.prompt, '']
+  return lines.join('\n')
+}
+
+/** Parse one `---` frontmatter + body preset file; undefined when malformed. */
+function parsePresetText(id, kind, text) {
+  if (typeof text !== 'string') return undefined
+  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
+  if (match === null) return undefined
+  const fields = {}
+  for (const line of match[1].split(/\r?\n/)) {
+    const index = line.indexOf(':')
+    if (index <= 0) continue
+    const key = line.slice(0, index).trim()
+    let value = line.slice(index + 1).trim()
+    if (value.startsWith('"') && value.endsWith('"')) {
+      try {
+        value = JSON.parse(value)
+      } catch {
+        continue
+      }
+    }
+    fields[key] = value
+  }
+  const prompt = text.slice(match[0].length).trim()
+  if (prompt.length > MAX_PRESET_PROMPT_LENGTH) return undefined
+  const name = typeof fields.name === 'string' && fields.name.trim() !== '' ? fields.name.trim() : id
+  if (name.length > MAX_PRESET_NAME_LENGTH) return undefined
+  return {
+    id,
+    name,
+    prompt,
+    pinned: String(fields.pinned).toLowerCase() === 'true',
+    builtin: presetBuiltinIds(kind).has(id),
+  }
+}
+
+/** Write one preset markdown file (atomic rename so the watcher sees one event). */
+function writePresetFile(kind, preset) {
+  const file = presetFilePath(kind, preset.id)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
+  fs.writeFileSync(temporary, serializePreset(preset), 'utf8')
+  fs.renameSync(temporary, file)
+}
+
+/** Seed the shipped defaults as user files (idempotent; never overwrites). */
+function seedPresetFiles() {
+  for (const kind of KINDS) {
+    for (const preset of DEFAULT_PRESETS[PRESET_KEY[kind]]) {
+      if (fs.existsSync(presetFilePath(kind, preset.id))) continue
+      writePresetFile(kind, preset)
+    }
+  }
+}
+
+/**
+ * Import the pre-markdown presets.json once: one file per preset, then the JSON
+ * is renamed away so a stale snapshot cannot re-import over newer files.
+ * @param ctx - host context, for diagnostics.
+ */
+function migratePresetsJson(ctx) {
+  const file = presetsFile()
+  if (!fs.existsSync(file)) return
+  let raw
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    raw = undefined
+  }
+  const library = normalizePresets(raw)
+  for (const kind of KINDS) {
+    for (const preset of library[PRESET_KEY[kind]]) {
+      if (fs.existsSync(presetFilePath(kind, preset.id))) continue
+      writePresetFile(kind, preset)
+    }
+  }
+  try {
+    fs.renameSync(file, `${file}.migrated`)
+  } catch {
+    // Keeping the file is harmless: existing files are never overwritten above.
+  }
+  ctx?.logger?.info?.('dsh-output-style: migrated presets.json into markdown files')
+}
+
+/**
+ * Load the markdown preset library. A malformed file is skipped with a
+ * warning and never breaks the plugin; an empty kind falls back to the shipped
+ * defaults so the composer always has presets.
+ * @param ctx - host context, for diagnostics.
+ * @returns the library in file order.
+ */
+function loadPresetLibrary(ctx) {
+  const library = { version: PRESETS_VERSION, tones: [], outputs: [] }
+  for (const kind of KINDS) {
+    const dir = presetKindDir(kind)
+    let entries
+    try {
+      entries = fs.readdirSync(dir)
+    } catch {
+      entries = []
+    }
+    for (const name of entries.filter((entry) => entry.endsWith('.md')).sort()) {
+      const id = name.slice(0, -3)
+      if (id === '' || id.length > MAX_PRESET_NAME_LENGTH) continue
+      if (library[PRESET_KEY[kind]].length >= MAX_PRESETS_PER_KIND) break
+      let text
+      try {
+        text = fs.readFileSync(path.join(dir, name), 'utf8')
+      } catch {
+        continue
+      }
+      const preset = parsePresetText(id, kind, text)
+      if (preset === undefined) {
+        ctx?.logger?.warn?.('dsh-output-style: skipped malformed preset file %s', name)
+        continue
+      }
+      library[PRESET_KEY[kind]].push(preset)
+    }
+  }
+  for (const kind of KINDS) {
+    if (library[PRESET_KEY[kind]].length > 0) continue
+    seedPresetFiles()
+    library[PRESET_KEY[kind]] = DEFAULT_PRESETS[PRESET_KEY[kind]].map((preset) => ({ ...preset }))
+  }
+  return library
+}
+
 function createPresetStore(ctx) {
   let cached
-  let cachedStamp
+  let prepared = false
+
+  /** One-time import of the pre-markdown library, then the shipped files. */
+  function prepare() {
+    if (prepared) return
+    prepared = true
+    try {
+      migratePresetsJson(ctx)
+    } catch (error) {
+      ctx?.logger?.warn?.('dsh-output-style: preset migration failed: %s', String((error && error.message) || error))
+    }
+    try {
+      seedPresetFiles()
+    } catch (error) {
+      ctx?.logger?.warn?.('dsh-output-style: preset files could not be seeded: %s', String((error && error.message) || error))
+    }
+  }
 
   function load() {
-    const file = presetsFile()
-    const read = readJsonCached(file, ctx, 'preset library')
-    if (!read.exists || read.broken) {
-      const seeded = cloneDefaults()
-      try {
-        writeJson(file, seeded)
-      } catch (error) {
-        ctx?.logger?.warn?.('dsh-output-style: preset library could not be seeded: %s', String((error && error.message) || error))
-      }
-      cached = seeded
-      cachedStamp = undefined
-      return cached
-    }
-    if (cached !== undefined && cachedStamp !== undefined && read.stat !== undefined
-      && cachedStamp.mtimeMs === read.stat.mtimeMs && cachedStamp.size === read.stat.size) {
-      return cached
-    }
-    cached = normalizePresets(read.raw)
-    cachedStamp = read.stat === undefined ? undefined : { mtimeMs: read.stat.mtimeMs, size: read.stat.size }
+    prepare()
+    if (cached === undefined) cached = loadPresetLibrary(ctx)
     return cached
   }
 
-  function save(library) {
-    writeJson(presetsFile(), library)
-    cached = library
+  function reload() {
     try {
-      const stat = fs.statSync(presetsFile())
-      cachedStamp = { mtimeMs: stat.mtimeMs, size: stat.size }
-    } catch {
-      cachedStamp = undefined
+      cached = loadPresetLibrary(ctx)
+    } catch (error) {
+      ctx?.logger?.warn?.('dsh-output-style: preset reload skipped: %s', String((error && error.message) || error))
     }
+    return cached
+  }
+
+  // Watch the user preset tree and swap the library after a coalescing delay;
+  // a failed reload keeps the previous library, never breaks the composer.
+  try {
+    ctx.effect(() => {
+      let timer
+      let watcher
+      try {
+        watcher = fs.watch(presetsDir(), { persistent: false, recursive: true }, () => {
+          if (timer !== undefined) return
+          timer = setTimeout(() => {
+            timer = undefined
+            reload()
+          }, WATCH_DEBOUNCE_MS)
+        })
+      } catch (error) {
+        ctx?.logger?.warn?.('dsh-output-style: preset directory cannot be watched: %s', String((error && error.message) || error))
+        return () => {}
+      }
+      return () => {
+        if (timer !== undefined) clearTimeout(timer)
+        try {
+          watcher.close()
+        } catch {
+          // The watcher is already gone.
+        }
+      }
+    })
+  } catch {
+    // A composition without the effect service still serves the loaded library.
+  }
+
+  // Prepare on activation so the first assembly or dropdown read is settled.
+  try {
+    load()
+  } catch (error) {
+    ctx?.logger?.warn?.('dsh-output-style: preset library could not be prepared: %s', String((error && error.message) || error))
   }
 
   function list() {
@@ -588,29 +765,19 @@ function createPresetStore(ctx) {
     return load()[PRESET_KEY[kind]].find((preset) => preset.id === id)
   }
 
-  function ensurePinnedBounds(library) {
-    for (const kind of KINDS) {
-      let pinned = 0
-      for (const preset of library[PRESET_KEY[kind]]) {
-        if (!preset.pinned) continue
-        pinned += 1
-        if (pinned > MAX_PINNED_PER_KIND) preset.pinned = false
-      }
+  /** Keep at most MAX_PINNED_PER_KIND pinned rows per kind, rewriting the losers. */
+  function enforcePinnedCap(kind, exceptId) {
+    const library = load()
+    const list = library[PRESET_KEY[kind]]
+    let pinned = list.filter((preset) => preset.pinned)
+    if (pinned.length <= MAX_PINNED_PER_KIND) return
+    const keep = new Set(pinned.slice(0, MAX_PINNED_PER_KIND).map((preset) => preset.id))
+    for (const preset of pinned) {
+      if (keep.has(preset.id) || preset.id === exceptId) continue
+      preset.pinned = false
+      writePresetFile(kind, preset)
     }
-  }
-
-  /** When pinning would exceed the cap, unpin the last pinned row (never the row being saved). */
-  function makeRoomForPinned(library, kind, exceptId) {
-    const key = PRESET_KEY[kind]
-    const pinned = library[key].filter((preset) => preset.pinned && preset.id !== exceptId)
-    if (pinned.length < MAX_PINNED_PER_KIND) return
-    for (let index = library[key].length - 1; index >= 0; index -= 1) {
-      const preset = library[key][index]
-      if (preset.pinned && preset.id !== exceptId) {
-        preset.pinned = false
-        return
-      }
-    }
+    reload()
   }
 
   function makeId(library, kind, name) {
@@ -629,21 +796,12 @@ function createPresetStore(ctx) {
     return candidate
   }
 
-  // Seed or repair the library on activation, so a corrupt file is replaced
-  // before the first prompt assembly or dropdown read.
-  try {
-    load()
-  } catch (error) {
-    ctx?.logger?.warn?.('dsh-output-style: preset library could not be prepared: %s', String((error && error.message) || error))
-  }
-
   return {
     list,
     find,
-    /** Create or replace one preset; returns the saved list. */
+    /** Create or replace one preset file; returns the saved list. */
     upsert(kind, input) {
       if (!KINDS.includes(kind)) throw new HttpError(400, 'invalid', 'kind must be tone or output')
-      const key = PRESET_KEY[kind]
       const name = typeof input.name === 'string' ? input.name.trim() : ''
       if (name === '' || name.length > MAX_PRESET_NAME_LENGTH) {
         throw new HttpError(400, 'invalid', `name must be 1-${MAX_PRESET_NAME_LENGTH} characters`)
@@ -652,42 +810,39 @@ function createPresetStore(ctx) {
       if (input.prompt.length > MAX_PRESET_PROMPT_LENGTH) {
         throw new HttpError(400, 'invalid', `prompt must be at most ${MAX_PRESET_PROMPT_LENGTH} characters`)
       }
-      const library = normalizePresets(load())
+      const library = load()
+      const key = PRESET_KEY[kind]
       const wantedId = typeof input.id === 'string' ? input.id.trim() : ''
       const existing = wantedId === '' ? undefined : library[key].find((preset) => preset.id === wantedId)
+      let preset
       if (existing !== undefined) {
-        existing.name = name
-        existing.prompt = input.prompt
-        if (typeof input.pinned === 'boolean') {
-          existing.pinned = input.pinned
-          if (input.pinned) makeRoomForPinned(library, kind, existing.id)
-        }
+        preset = { ...existing, name, prompt: input.prompt }
+        if (typeof input.pinned === 'boolean') preset.pinned = input.pinned
       } else {
         if (library[key].length >= MAX_PRESETS_PER_KIND) {
           throw new HttpError(400, 'full', `at most ${MAX_PRESETS_PER_KIND} presets per kind`)
         }
-        if (input.pinned === true) makeRoomForPinned(library, kind, null)
-        library[key].push({
+        preset = {
           id: wantedId === '' ? makeId(library, kind, name) : wantedId,
           name,
           prompt: input.prompt,
           pinned: input.pinned === true,
           builtin: false,
-        })
+        }
       }
-      ensurePinnedBounds(library)
-      save(library)
-      return { list: list(), saved: existing ?? library[key][library[key].length - 1] }
+      writePresetFile(kind, preset)
+      reload()
+      enforcePinnedCap(kind, preset.id)
+      return { list: list(), saved: find(kind, preset.id) ?? preset }
     },
-    /** Delete one preset; returns the saved list. */
+    /** Delete one preset file; returns the saved list. */
     remove(kind, id) {
       if (!KINDS.includes(kind)) throw new HttpError(400, 'invalid', 'kind must be tone or output')
-      const key = PRESET_KEY[kind]
-      const library = normalizePresets(load())
-      const next = library[key].filter((preset) => preset.id !== id)
-      if (next.length === library[key].length) throw new HttpError(404, 'not-found', 'preset does not exist')
-      library[key] = next
-      save(library)
+      if (typeof id !== 'string' || id === '') throw new HttpError(400, 'invalid', 'id required')
+      const file = presetFilePath(kind, id)
+      if (!fs.existsSync(file)) throw new HttpError(404, 'not-found', 'preset does not exist')
+      fs.rmSync(file, { force: true })
+      reload()
       return { list: list() }
     },
     /** Restore one kind, or the whole library, to the shipped defaults. */
@@ -695,15 +850,24 @@ function createPresetStore(ctx) {
       if (kind !== undefined && kind !== null && !KINDS.includes(kind)) {
         throw new HttpError(400, 'invalid', 'kind must be tone or output')
       }
-      const library = normalizePresets(load())
-      const defaults = cloneDefaults()
-      if (kind === 'tone') library.tones = defaults.tones
-      else if (kind === 'output') library.outputs = defaults.outputs
-      else {
-        library.tones = defaults.tones
-        library.outputs = defaults.outputs
+      const kinds = kind === 'tone' || kind === 'output' ? [kind] : [...KINDS]
+      for (const target of kinds) {
+        const dir = presetKindDir(target)
+        let entries = []
+        try {
+          entries = fs.readdirSync(dir)
+        } catch {
+          entries = []
+        }
+        for (const entry of entries) {
+          if (!entry.endsWith('.md')) continue
+          fs.rmSync(path.join(dir, entry), { force: true })
+        }
+        for (const preset of DEFAULT_PRESETS[PRESET_KEY[target]]) {
+          writePresetFile(target, { ...preset })
+        }
       }
-      save(library)
+      reload()
       return { list: list() }
     },
   }
@@ -846,10 +1010,6 @@ async function readJsonBody(req) {
   return body !== null && typeof body === 'object' ? body : {}
 }
 
-function requireSessionId(body) {
-  return requireSessionIdValue(body.sessionId)
-}
-
 function requireKind(body) {
   const kind = typeof body.kind === 'string' ? body.kind : ''
   if (!KINDS.includes(kind)) throw new HttpError(400, 'invalid', 'kind must be tone or output')
@@ -874,88 +1034,16 @@ function routeHandler(run) {
   }
 }
 
-function sessionPayload(store, sessionId) {
-  const session = store.session(sessionId)
-  return {
-    sessionId,
-    enabled: session.toneEnabled,
-    outputEnabled: session.outputEnabled,
-    tone: session.tone,
-    output: session.output,
-    version: VERSION,
-  }
-}
-
 /**
- * Publish the browser-facing switch surface: session state, master switch,
- * preset selection, and the preset library (read + settings writes).
+ * Publish the browser-facing preset-library surface: the settings page's read
+ * and CRUD operations. Session state is not served here any more — the browser
+ * reads the `outputStylePair` session projection and writes through `/style`
+ * commands, so there is nothing to poll and no custom state protocol.
  * @param webServer - the Host web server.
  * @param fiber - the owning injected context.
- * @param store - the session switch store.
  * @param presets - the preset library.
  */
-function registerRoutes(webServer, fiber, store, presets) {
-  fiber.effect(() => webServer.register({
-    kind: 'exact',
-    path: `${ROUTE_PREFIX}/state`,
-    handler: routeHandler(async (body) => {
-      const sessionId = requireSessionId(body)
-      if (body.hello === true) store.noteClient(sessionId, body.version)
-      return sessionPayload(store, sessionId)
-    }),
-  }))
-  fiber.effect(() => webServer.register({
-    kind: 'exact',
-    path: `${ROUTE_PREFIX}/toggle`,
-    handler: routeHandler(async (body) => {
-      const sessionId = requireSessionId(body)
-      store.toggle(sessionId)
-      return sessionPayload(store, sessionId)
-    }),
-  }))
-  fiber.effect(() => webServer.register({
-    kind: 'exact',
-    path: `${ROUTE_PREFIX}/set`,
-    handler: routeHandler(async (body) => {
-      const sessionId = requireSessionId(body)
-      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'invalid', 'enabled must be a boolean')
-      store.setToneEnabled(sessionId, body.enabled)
-      return sessionPayload(store, sessionId)
-    }),
-  }))
-  fiber.effect(() => webServer.register({
-    kind: 'exact',
-    path: `${ROUTE_PREFIX}/toggle-output`,
-    handler: routeHandler(async (body) => {
-      const sessionId = requireSessionId(body)
-      store.toggleOutput(sessionId)
-      return sessionPayload(store, sessionId)
-    }),
-  }))
-  fiber.effect(() => webServer.register({
-    kind: 'exact',
-    path: `${ROUTE_PREFIX}/set-output`,
-    handler: routeHandler(async (body) => {
-      const sessionId = requireSessionId(body)
-      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'invalid', 'enabled must be a boolean')
-      store.setOutputEnabled(sessionId, body.enabled)
-      return sessionPayload(store, sessionId)
-    }),
-  }))
-  fiber.effect(() => webServer.register({
-    kind: 'exact',
-    path: `${ROUTE_PREFIX}/select`,
-    handler: routeHandler(async (body) => {
-      const sessionId = requireSessionId(body)
-      const kind = requireKind(body)
-      const id = body.id === undefined || body.id === null ? null : String(body.id)
-      if (id !== null && presets.find(kind, id) === undefined) {
-        throw new HttpError(404, 'not-found', `no ${kind} preset "${id}"`)
-      }
-      store.setPreset(sessionId, kind, id)
-      return sessionPayload(store, sessionId)
-    }),
-  }))
+function registerRoutes(webServer, fiber, presets) {
   fiber.effect(() => webServer.register({
     kind: 'exact',
     path: `${ROUTE_PREFIX}/presets`,
@@ -1011,7 +1099,7 @@ function registerCommand(commands, fiber, store, presets) {
     name: 'style',
     description: '开关沟通基调与产出形态，或查看/设置当前会话的基调与产出预设',
     input: { hint: '[on|off|output on|output off|tone <id>|output <id>]' },
-    handler: ({ agent, rawInput }) => {
+    handler: async ({ agent, rawInput }) => {
       const session = agent !== null && typeof agent === 'object' ? agent.session : undefined
       const sessionId = session !== null && typeof session === 'object' && session.id !== undefined ? String(session.id) : ''
       if (sessionId === '') return { kind: 'error', text: '当前会话不可用，无法切换输出风格。' }
@@ -1025,27 +1113,27 @@ function registerCommand(commands, fiber, store, presets) {
         }
       }
       if (verb === 'on' || verb === '开') {
-        store.setToneEnabled(sessionId, true)
+        await store.setToneEnabled(sessionId, true)
         return { kind: 'success', text: '基调开关已开启。' }
       }
       if (verb === 'off' || verb === '关') {
-        store.setToneEnabled(sessionId, false)
+        await store.setToneEnabled(sessionId, false)
         return { kind: 'success', text: '基调开关已关闭。' }
       }
       if (verb === 'output' && (rest[0] === 'on' || rest[0] === 'off')) {
         const enabled = rest[0] === 'on'
-        store.setOutputEnabled(sessionId, enabled)
+        await store.setOutputEnabled(sessionId, enabled)
         return { kind: 'success', text: `产出开关已${enabled ? '开启' : '关闭'}。` }
       }
       if (verb === 'tone' || verb === 'output') {
         const kind = verb
         const id = (rest[0] ?? '').trim()
         if (id === '' || id === 'default' || id === 'none') {
-          store.setPreset(sessionId, kind, null)
+          await store.setPreset(sessionId, kind, null)
           return { kind: 'success', text: `${kind === 'tone' ? '基调' : '产出'}已恢复默认。` }
         }
         if (presets.find(kind, id) === undefined) return { kind: 'error', text: `没有 ${kind} 预设「${id}」。` }
-        store.setPreset(sessionId, kind, id)
+        await store.setPreset(sessionId, kind, id)
         return { kind: 'success', text: `${kind === 'tone' ? '基调' : '产出'}已设为「${presetName(presets, kind, id)}」，对应开关已开启。` }
       }
       return { kind: 'error', text: '用法：/style [on|off|output on|output off|tone <id>|output <id>]' }
@@ -1053,24 +1141,123 @@ function registerCommand(commands, fiber, store, presets) {
   }))
 }
 
+// --- session projection ------------------------------------------------------
+
+/** Validate the projection's persisted fold state (zod-shaped `.parse`). */
+function parseFoldState(raw) {
+  if (raw === null || typeof raw !== 'object') throw new Error('fold state must be an object')
+  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : ''
+  if (sessionId === '') throw new Error('fold state is missing its session id')
+  const pending = raw.pending
+  if (pending !== null && (typeof pending !== 'object' || typeof pending.commandId !== 'string')) {
+    throw new Error('fold state pending is invalid')
+  }
+  return { sessionId, pending: pending === null || pending === undefined ? null : { commandId: pending.commandId } }
+}
+
+/** Validate the projection's wire view (zod-shaped `.parse`). */
+function parseStyleView(raw) {
+  if (raw === null || typeof raw !== 'object') throw new Error('style view must be an object')
+  if (typeof raw.enabled !== 'boolean' || typeof raw.outputEnabled !== 'boolean') throw new Error('style view switches are invalid')
+  if (raw.tone !== null && typeof raw.tone !== 'string') throw new Error('style view tone is invalid')
+  if (raw.output !== null && typeof raw.output !== 'string') throw new Error('style view output is invalid')
+  if (!Array.isArray(raw.tones) || !Array.isArray(raw.outputs)) throw new Error('style view libraries are invalid')
+  return raw
+}
+
+/**
+ * Fold one committed command lifecycle event into the projection state. The
+ * state carries only the session id and the in-flight switch; the whole view is
+ * derived from the domain at read time, so a migrated or out-of-band record can
+ * never be masked by stale fold state.
+ * @param state - folded state before the event.
+ * @param event - one committed session event.
+ * @returns the next state; the same reference when the event is not ours.
+ */
+function foldStyleEvent(state, event) {
+  if (event === null || typeof event !== 'object') return state
+  const data = event.data
+  if (event.type === 'command/run') {
+    if (data === null || typeof data !== 'object' || data.name !== 'style' || data.args === undefined) return state
+    const argument = String(data.args).trim()
+    if (argument === '' || argument === 'status') return state
+    const commandId = String(data.commandId)
+    if (state.pending !== null && state.pending.commandId === commandId) return state
+    return { sessionId: state.sessionId, pending: { commandId } }
+  }
+  if (event.type === 'command/done' && state.pending !== null) {
+    if (data === null || typeof data !== 'object') return state
+    if (state.pending.commandId !== String(data.commandId)) return state
+    return { sessionId: state.sessionId, pending: null }
+  }
+  return state
+}
+
+/** Build the whole wire view: the live domain record plus both compact libraries. */
+function buildStyleView(store, presets, state) {
+  const session = store.session(state.sessionId)
+  const library = presets.list()
+  const compact = (list) => list.map((preset) => ({ id: preset.id, name: preset.name, pinned: preset.pinned === true }))
+  return {
+    enabled: session.toneEnabled,
+    tone: session.tone,
+    outputEnabled: session.outputEnabled,
+    output: session.output,
+    tones: compact(Array.isArray(library.tones) ? library.tones : []),
+    outputs: compact(Array.isArray(library.outputs) ? library.outputs : []),
+  }
+}
+
+/**
+ * Register the `outputStylePair` session projection: the composer subscribes to
+ * this whole value instead of polling a route. Registration rides the injected
+ * scope's fiber effect.
+ * @param ctx - plugin context.
+ * @param store - the domain-backed session store.
+ * @param presets - the preset library.
+ */
+function registerProjection(ctx, store, presets) {
+  ctx.inject(['sessionProjections'], (sub) => {
+    sub.effect(() => sub.sessionProjections.register({
+      key: PROJECTION_KEY,
+      stateSchema: { parse: parseFoldState },
+      init: (header) => ({
+        sessionId: header !== null && typeof header === 'object' && header.id !== undefined ? String(header.id) : '',
+        pending: null,
+      }),
+      apply: foldStyleEvent,
+      wire: {
+        viewSchema: { parse: parseStyleView },
+        view: (state) => buildStyleView(store, presets, state),
+      },
+      stateVersion: PROJECTION_STATE_VERSION,
+    }))
+  })
+}
+
 // --- plugin ------------------------------------------------------------------
 
 /**
- * Wire the switch and both preset slots: prompt sections, HTTP routes, and the
- * command, each only where the corresponding service is composed.
- * @param ctx - host context.
+ * Wire the storage-domain session state, the `/style` write path, the session
+ * projection the browser reads, the preset settings routes, and the three
+ * prompt sections.
+ * @param ctx - host plugin context.
  */
-export function apply(ctx) {
-  migrateLegacyDir(ctx)
-  const store = createStore(ctx)
-  const presets = createPresetStore(ctx)
-  try {
-    store.markActivated()
-  } catch (error) {
-    ctx.logger?.warn?.('dsh-output-style: activation marker could not be written: %s', String((error && error.message) || error))
+export const inject = ['storageDomain']
+
+export async function apply(ctx) {
+  const storageDomain = ctx.get('storageDomain')
+  if (storageDomain === undefined || storageDomain === null || typeof storageDomain.open !== 'function') {
+    ctx.logger?.warn?.('dsh-output-style: the storageDomain service is unavailable, so the plugin stays inactive')
+    return
   }
+  const table = await openSelectionTable(ctx, storageDomain)
+  if (table === undefined) return
+  const store = createStore(table)
+  const presets = createPresetStore(ctx)
+  registerProjection(ctx, store, presets)
 
   ctx.inject(['systemPrompt'], (sub) => registerPrompt(sub.systemPrompt, sub, store, presets))
-  ctx.inject(['webServer'], (sub) => registerRoutes(sub.webServer, sub, store, presets))
+  ctx.inject(['webServer'], (sub) => registerRoutes(sub.webServer, sub, presets))
   ctx.inject(['commands'], (sub) => registerCommand(sub.commands, sub, store, presets))
 }

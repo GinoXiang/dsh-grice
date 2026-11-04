@@ -81,12 +81,14 @@ function fakeCtx() {
       return disposer
     },
     get(name) {
-      assert.equal(name, 'locale')
-      return {
-        getSnapshot: () => ({ active: 'zh' }),
-        subscribe: () => () => {},
-        register: () => () => {},
+      if (name === 'locale') {
+        return {
+          getSnapshot: () => ({ active: 'zh' }),
+          subscribe: () => () => {},
+          register: () => () => {},
+        }
       }
+      return undefined
     },
   }
 }
@@ -100,7 +102,7 @@ test('the bundle registers the merged tone control, the output dropdown, and the
     return React
   })
   assert.equal(plugin.name, 'dsh-output-style')
-  assert.deepEqual(plugin.inject, ['slots'])
+  assert.deepEqual(plugin.inject, ['slots', 'sessions'])
   assert.equal(typeof plugin.apply, 'function')
 
   const ctx = fakeCtx()
@@ -127,10 +129,16 @@ test('the bundle registers the merged tone control, the output dropdown, and the
   assert.equal(created[0].removed, true)
 })
 
-test('the bundle talks only to its own loopback routes', async () => {
+test('the bundle reads the session projection and keeps only the settings routes', async () => {
   const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('../client.js', import.meta.url), 'utf8'))
-  for (const route of ['/state', '/toggle', '/select', '/presets', '/presets/save', '/presets/delete', '/presets/reset']) {
+  for (const route of ['/presets', '/presets/save', '/presets/delete', '/presets/reset']) {
     assert.match(source, new RegExp(`'${route}'`))
+  }
+  // Session state comes from the host projection, not a polling endpoint.
+  assert.match(source, /outputStylePair/)
+  assert.match(source, /faceOf\(/)
+  for (const route of ['/state', '/toggle', '/set', '/toggle-output', '/set-output', '/select']) {
+    assert.doesNotMatch(source, new RegExp(`'${route}'`))
   }
   assert.doesNotMatch(source, /https?:\/\//)
 })

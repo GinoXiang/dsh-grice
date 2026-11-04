@@ -1,6 +1,6 @@
 {
   "name": "dsh-output-style",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "输出风格：输入框里两个分体控件（沟通基调、产出形态各带独立开关与预设菜单），按会话注入系统提示词；附带预设管理设置页。Two split composer controls for output style (tone and output form, each with its own switch and preset menu) that steer each session's system prompt, with a preset settings page.",
   "type": "module",
   "main": "index.js",

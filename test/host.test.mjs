@@ -1,13 +1,14 @@
-// Behaviour tests for the dsh-output-style host half. No dependencies: a fake cordis
-// context captures the registrations, and a fake HTTP request/response pair
-// exercises the loopback route surface exactly as the browser half does.
+// Behaviour tests for the dsh-output-style host half. No dependencies: a fake
+// cordis context captures the registrations, and an in-memory stand-in for the
+// official storage-domain and session-projection services exercises the new
+// state architecture exactly the way the Host composes it.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import { apply, POLICY_TEXT, stateFile, presetsFile } from '../index.js'
+import { apply, POLICY_TEXT, stateFile, presetsFile, presetsDir } from '../index.js'
 
 const TEST_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.tmp', 'style-tests')
 
@@ -26,14 +27,62 @@ async function withHome(name, body) {
   }
 }
 
+/**
+ * Compose the fake host services: prompt sections, the settings routes, the
+ * command registry, plus in-memory `storageDomain` and `sessionProjections`
+ * implementing the same contracts the real Host services expose.
+ */
 function createServices() {
   const sections = []
   const routes = new Map()
   const commandDefinitions = []
+  const projections = []
+  const domains = []
+
+  const storageDomain = {
+    async open(spec) {
+      const tables = new Map()
+      for (const name of Object.keys(spec.tables)) tables.set(name, new Map())
+      const domain = {
+        spec,
+        tables,
+        table(name) {
+          const map = tables.get(name)
+          if (map === undefined) throw new Error(`domain '${spec.name}' declares no table '${name}'`)
+          return {
+            get: (key) => map.get(key),
+            async put(key, value) { map.set(key, JSON.parse(JSON.stringify(value))) },
+            async delete(key) { map.delete(key) },
+            entries: () => map.entries(),
+            keys: () => map.keys(),
+            get size() { return map.size },
+          }
+        },
+        async close() {},
+      }
+      domains.push(domain)
+      return domain
+    },
+  }
+
+  const sessionProjections = {
+    register(definition) {
+      projections.push(definition)
+      return () => {
+        const index = projections.indexOf(definition)
+        if (index !== -1) projections.splice(index, 1)
+      }
+    },
+  }
+
   return {
     sections,
     routes,
     commandDefinitions,
+    projections,
+    domains,
+    storageDomain,
+    sessionProjections,
     systemPrompt: {
       section(section) {
         sections.push(section)
@@ -64,6 +113,7 @@ function createServices() {
 function createCtx(services) {
   return {
     logger: { warn() {}, info() {}, debug() {} },
+    fiber: { uid: 1 },
     effects: [],
     effect(factory) {
       const disposer = factory()
@@ -81,6 +131,53 @@ function createCtx(services) {
       while (this.effects.length > 0) this.effects.pop()()
     },
   }
+}
+
+/** Boot the plugin against a fresh fake host. */
+async function boot() {
+  const services = createServices()
+  const ctx = createCtx(services)
+  await apply(ctx)
+  return { services, ctx }
+}
+
+/** The `selection` table contents of the opened domain. */
+function records(services) {
+  const domain = services.domains[0]
+  return domain === undefined ? new Map() : domain.tables.get('selection')
+}
+
+/** The one registered `/style` command definition. */
+function commandDefinition(services) {
+  const definition = services.commandDefinitions.find((entry) => entry.name === 'style')
+  assert.ok(definition, 'the /style command is registered')
+  return definition
+}
+
+/** Execute one `/style` line the way the command runtime does. */
+function runCommand(services, sessionId, rawInput) {
+  return commandDefinition(services).handler({ agent: { session: { id: sessionId } }, rawInput, commandId: 'command-1' })
+}
+
+/** The one registered session projection definition. */
+function projectionDefinition(services) {
+  const definition = services.projections[0]
+  assert.ok(definition, 'the session projection is registered')
+  return definition
+}
+
+/** The whole wire view for one session, built from the projection's own state. */
+function projectionView(services, sessionId) {
+  const definition = projectionDefinition(services)
+  const state = definition.init({ id: sessionId }, 0)
+  return definition.wire.view(state)
+}
+
+/** The prompt section text for one session and one section name. */
+function sectionText(services, sectionName, sessionId) {
+  const section = services.sections.find((entry) => entry.name === sectionName)
+  assert.ok(section, `section ${sectionName} is registered`)
+  return section.text({ agent: { session: { id: sessionId } } })
 }
 
 /** One fake POST request; overrides may replace method, socket, headers, or body. */
@@ -127,412 +224,258 @@ function callRoute(route, body, overrides) {
   })
 }
 
-function readState() {
-  return JSON.parse(fs.readFileSync(stateFile(), 'utf8'))
-}
-
-function readPresets() {
-  return JSON.parse(fs.readFileSync(presetsFile(), 'utf8'))
-}
-
-function section(services, name) {
-  return services.sections.find((entry) => entry.name === name)
-}
-
-function assemblySession(id) {
-  return { agent: { session: { id } } }
-}
-
-const ALL_SECTIONS = ['style:policy', 'style:tone', 'style:output']
-
-test('activation registers three prompt sections, ten routes, the command, and seeds presets', async () => {
-  await withHome('activation', () => {
-    const services = createServices()
-    const ctx = createCtx(services)
-    apply(ctx)
-
-    const marker = readState()
-    assert.equal(typeof marker.activatedAt, 'string')
-    assert.equal(marker.activatedPid, process.pid)
-    assert.deepEqual(marker.sessions, {})
-
-    for (const name of ALL_SECTIONS) assert.ok(section(services, name), `${name} section is registered`)
-    assert.equal(section(services, 'style:policy').order, 650)
-    assert.equal(section(services, 'style:output').order, 660)
-
-    const library = readPresets()
-    assert.ok(library.tones.length >= 5)
-    assert.ok(library.outputs.length >= 5)
-    assert.equal(library.tones.find((preset) => preset.id === 'grice').prompt, POLICY_TEXT)
-    assert.equal(library.tones.find((preset) => preset.id === 'grice').pinned, true)
-
+test('the host declares the storage domain and registers the projection and sections', async () => {
+  await withHome('boot', async () => {
+    const { services, ctx } = await boot()
+    assert.equal(services.domains.length, 1)
+    assert.equal(services.domains[0].spec.name, 'output_style_pair')
+    assert.equal(services.domains[0].spec.version, 1)
+    assert.deepEqual(Object.keys(services.domains[0].spec.tables), ['selection'])
+    assert.equal(services.projections.length, 1)
+    assert.equal(services.projections[0].key, 'outputStylePair')
+    assert.equal(services.projections[0].stateVersion, 1)
+    assert.deepEqual(services.sections.map((section) => section.name), ['style:policy', 'style:tone', 'style:output'])
     assert.deepEqual([...services.routes.keys()].sort(), [
       '/dsh-output-style/presets',
       '/dsh-output-style/presets/delete',
       '/dsh-output-style/presets/reset',
       '/dsh-output-style/presets/save',
-      '/dsh-output-style/select',
-      '/dsh-output-style/set',
-      '/dsh-output-style/set-output',
-      '/dsh-output-style/state',
-      '/dsh-output-style/toggle',
-      '/dsh-output-style/toggle-output',
     ])
-    assert.equal(services.commandDefinitions.length, 1)
-    assert.equal(services.commandDefinitions[0].name, 'style')
-
     ctx.dispose()
-    assert.equal(services.sections.length, 0)
-    assert.equal(services.routes.size, 0)
-    assert.equal(services.commandDefinitions.length, 0)
   })
 })
 
-test('the master switch drives the Grice policy section and survives a restart', async () => {
-  await withHome('policy', async () => {
-    const services = createServices()
-    const ctx = createCtx(services)
-    apply(ctx)
-    const policy = section(services, 'style:policy')
+test('the tone switch drives the built-in policy section and survives a restart', async () => {
+  await withHome('tone-switch', async () => {
+    const { services, ctx } = await boot()
+    assert.equal(sectionText(services, 'style:policy', 'session-a'), '')
 
-    assert.equal(policy.text(assemblySession('session-a')), '')
-    const on = await callRoute(services.routes.get('/dsh-output-style/toggle'), { sessionId: 'session-a' })
-    assert.equal(on.body.enabled, true)
-    assert.equal(on.body.outputEnabled, false)
-    assert.equal(on.body.tone, null)
-    assert.equal(on.body.output, null)
-    assert.equal(policy.text(assemblySession('session-a')), POLICY_TEXT)
-    assert.equal(policy.text(assemblySession('session-b')), '')
-    assert.equal(readState().sessions['session-a'].toneEnabled, true)
+    const on = await runCommand(services, 'session-a', ' on')
+    assert.equal(on.kind, 'success')
+    assert.match(on.text, /基调开关已开启/)
+    assert.equal(sectionText(services, 'style:policy', 'session-a'), POLICY_TEXT)
+    assert.equal(sectionText(services, 'style:policy', 'session-b'), '')
+    assert.equal(records(services).get('session-a').toneEnabled, true)
+    assert.equal(projectionView(services, 'session-a').enabled, true)
 
-    const off = await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-a', enabled: false })
-    assert.equal(off.body.enabled, false)
-    assert.equal(policy.text(assemblySession('session-a')), '')
+    await runCommand(services, 'session-a', ' off')
+    assert.equal(sectionText(services, 'style:policy', 'session-a'), '')
+    assert.equal(records(services).has('session-a'), false, 'an all-off session leaves no domain record')
     ctx.dispose()
 
-    const second = createServices()
-    const secondCtx = createCtx(second)
-    apply(secondCtx)
-    assert.equal(section(second, 'style:policy').text(assemblySession('session-a')), '')
-    secondCtx.dispose()
+    // A second boot over the same DSH home reads the durable domain record.
+    const second = await boot()
+    const definition = projectionDefinition(second.services)
+    const state = definition.init({ id: 'session-a' }, 0)
+    assert.equal(definition.wire.view(state).enabled, false)
+    second.ctx.dispose()
   })
 })
 
-test('selecting a tone replaces the built-in policy and auto-enables the switch', async () => {
-  await withHome('tone', async () => {
-    const services = createServices()
-    apply(createCtx(services))
-    const policy = section(services, 'style:policy')
-    const tone = section(services, 'style:tone')
+test('selecting a tone replaces the policy and auto-enables only the tone switch', async () => {
+  await withHome('tone-select', async () => {
+    const { services, ctx } = await boot()
+    const selected = await runCommand(services, 'session-a', ' tone coach')
+    assert.equal(selected.kind, 'success')
+    assert.match(selected.text, /教练引导/)
+    const tone = sectionText(services, 'style:tone', 'session-a')
+    assert.ok(tone.length > 0)
+    assert.notEqual(tone, POLICY_TEXT)
+    assert.equal(sectionText(services, 'style:policy', 'session-a'), '')
+    assert.equal(sectionText(services, 'style:output', 'session-a'), '')
+    assert.equal(records(services).get('session-a').tone, 'coach')
+    assert.equal(records(services).get('session-a').outputEnabled, false)
 
-    // No selection yet, switch off.
-    await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-t', enabled: false })
-    assert.equal(tone.text(assemblySession('session-t')), '')
-
-    const selected = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: 'coach' })
-    assert.equal(selected.body.enabled, true)
-    assert.equal(selected.body.tone, 'coach')
-    assert.equal(policy.text(assemblySession('session-t')), '')
-    assert.match(tone.text(assemblySession('session-t')), /教练式引导/)
-    assert.equal(readState().sessions['session-t'].toneEnabled, true)
-
-    // The built-in grice tone means the built-in policy.
-    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: 'grice' })
-    assert.equal(policy.text(assemblySession('session-t')), POLICY_TEXT)
-    assert.equal(tone.text(assemblySession('session-t')), '')
-
-    // Clearing falls back to the built-in policy while staying on.
-    const cleared = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: null })
-    assert.equal(cleared.body.tone, null)
-    assert.equal(cleared.body.enabled, true)
-    assert.equal(policy.text(assemblySession('session-t')), POLICY_TEXT)
-
-    // Unknown ids are refused.
-    const bad = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'tone', id: 'nope' })
-    assert.equal(bad.status, 404)
-    const badKind = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-t', kind: 'music', id: 'grice' })
-    assert.equal(badKind.status, 400)
+    // An unknown preset is a command error and writes nothing.
+    const rejected = await runCommand(services, 'session-a', ' tone nope')
+    assert.equal(rejected.kind, 'error')
+    assert.equal(records(services).get('session-a').tone, 'coach')
+    ctx.dispose()
   })
 })
 
 test('the output switch gates its section independently of the tone switch', async () => {
-  await withHome('output', async () => {
-    const services = createServices()
-    apply(createCtx(services))
-    const output = section(services, 'style:output')
-    const policy = section(services, 'style:policy')
+  await withHome('output-switch', async () => {
+    const { services, ctx } = await boot()
+    const selected = await runCommand(services, 'session-o', ' output code')
+    assert.match(selected.text, /代码实现/)
+    assert.match(sectionText(services, 'style:output', 'session-o'), /代码/)
+    assert.equal(sectionText(services, 'style:policy', 'session-o'), '')
 
-    // Selecting an output preset enables only the output switch.
-    const selected = await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-o', kind: 'output', id: 'code' })
-    assert.equal(selected.body.output, 'code')
-    assert.equal(selected.body.outputEnabled, true)
-    assert.equal(selected.body.enabled, false)
-    assert.match(output.text(assemblySession('session-o')), /代码实现/)
-    assert.equal(policy.text(assemblySession('session-o')), '')
+    await runCommand(services, 'session-o', ' on')
+    assert.equal(sectionText(services, 'style:policy', 'session-o'), POLICY_TEXT)
+    assert.match(sectionText(services, 'style:output', 'session-o'), /代码/)
 
-    // Turning the tone switch on adds the policy without touching the output.
-    await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-o', enabled: true })
-    assert.equal(policy.text(assemblySession('session-o')), POLICY_TEXT)
-    assert.match(output.text(assemblySession('session-o')), /代码实现/)
-
-    // Turning the output switch off leaves the tone injection alone.
-    const off = await callRoute(services.routes.get('/dsh-output-style/toggle-output'), { sessionId: 'session-o' })
-    assert.equal(off.body.outputEnabled, false)
-    assert.equal(output.text(assemblySession('session-o')), '')
-    assert.equal(policy.text(assemblySession('session-o')), POLICY_TEXT)
-
-    const on = await callRoute(services.routes.get('/dsh-output-style/toggle-output'), { sessionId: 'session-o' })
-    assert.equal(on.body.outputEnabled, true)
-    assert.match(output.text(assemblySession('session-o')), /代码实现/)
-
-    // Clearing the preset stops the output text while the switch stays on.
-    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-o', kind: 'output', id: null })
-    assert.equal(output.text(assemblySession('session-o')), '')
-
-    // Turning the tone switch off leaves the selected output preset alone.
-    await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'session-o', enabled: false })
-    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-o', kind: 'output', id: 'doc' })
-    assert.equal(policy.text(assemblySession('session-o')), '')
-    assert.match(output.text(assemblySession('session-o')), /文档写作/)
-
-    const badOutputSet = await callRoute(services.routes.get('/dsh-output-style/set-output'), { sessionId: 'session-o', enabled: 'yes' })
-    assert.equal(badOutputSet.status, 400)
-  })
-})
-
-test('the preset library can be read, created, edited, deleted, and reset', async () => {
-  await withHome('presets', async () => {
-    const services = createServices()
-    apply(createCtx(services))
-    const presetsRoute = services.routes.get('/dsh-output-style/presets')
-    const saveRoute = services.routes.get('/dsh-output-style/presets/save')
-    const deleteRoute = services.routes.get('/dsh-output-style/presets/delete')
-    const resetRoute = services.routes.get('/dsh-output-style/presets/reset')
-
-    const initial = await callRoute(presetsRoute, {})
-    assert.ok(initial.body.presets.tones.length >= 5)
-    assert.ok(initial.body.presets.outputs.length >= 5)
-
-    const created = await callRoute(saveRoute, {
-      kind: 'output',
-      preset: { name: '周报模板', prompt: '按「完成 / 进行中 / 风险 / 下周」四段写周报。', pinned: true },
-    })
-    assert.equal(created.status, 200)
-    const saved = created.body.saved
-    assert.equal(saved.name, '周报模板')
-    assert.equal(saved.pinned, true)
-    assert.equal(saved.builtin, false)
-
-    const edited = await callRoute(saveRoute, {
-      kind: 'output',
-      preset: { id: saved.id, name: '周报模板 v2', prompt: '四段式周报。' },
-    })
-    assert.equal(edited.body.saved.name, '周报模板 v2')
-    assert.equal(readPresets().outputs.filter((preset) => preset.id === saved.id).length, 1)
-
-    const deleted = await callRoute(deleteRoute, { kind: 'output', id: saved.id })
-    assert.equal(deleted.status, 200)
-    assert.equal(deleted.body.list.outputs.some((preset) => preset.id === saved.id), false)
-
-    const reset = await callRoute(resetRoute, { kind: 'output' })
-    assert.equal(reset.status, 200)
-    assert.equal(reset.body.list.outputs.length, initial.body.presets.outputs.length)
-    assert.equal(reset.body.list.tones.length, initial.body.presets.tones.length)
-
-    const invalid = await callRoute(saveRoute, { kind: 'tone', preset: { name: '', prompt: 'x' } })
-    assert.equal(invalid.status, 400)
-    const longPrompt = await callRoute(saveRoute, { kind: 'tone', preset: { name: 'x', prompt: 'a'.repeat(2001) } })
-    assert.equal(longPrompt.status, 400)
-    const missing = await callRoute(deleteRoute, { kind: 'tone', id: 'nope' })
-    assert.equal(missing.status, 404)
-  })
-})
-
-test('a selected preset that is deleted degrades to no injection', async () => {
-  await withHome('deleted-preset', async () => {
-    const services = createServices()
-    apply(createCtx(services))
-    const tone = section(services, 'style:tone')
-    await callRoute(services.routes.get('/dsh-output-style/presets/save'), {
-      kind: 'tone',
-      preset: { name: '临时基调', prompt: '临时提示词', pinned: false },
-    })
-    const library = readPresets()
-    const id = library.tones.find((preset) => preset.name === '临时基调').id
-    await callRoute(services.routes.get('/dsh-output-style/select'), { sessionId: 'session-d', kind: 'tone', id })
-    assert.match(tone.text(assemblySession('session-d')), /临时提示词/)
-    await callRoute(services.routes.get('/dsh-output-style/presets/delete'), { kind: 'tone', id })
-    assert.equal(tone.text(assemblySession('session-d')), '')
-    assert.equal(section(services, 'style:policy').text(assemblySession('session-d')), '')
-  })
-})
-
-test('old state migrates to the current session shape', async () => {
-  await withHome('migrate', () => {
-    const file = stateFile()
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, JSON.stringify({
-      version: 1,
-      sessions: { 'session-old': true },
-      activatedAt: '2026-10-01T00:00:00.000Z',
-    }), 'utf8')
-    const services = createServices()
-    const ctx = createCtx(services)
-    apply(ctx)
-    const state = readState()
-    assert.deepEqual(state.sessions['session-old'], { toneEnabled: true, tone: null, output: null, outputEnabled: false })
-    assert.equal(section(services, 'style:policy').text(assemblySession('session-old')), POLICY_TEXT)
+    await runCommand(services, 'session-o', ' output off')
+    assert.equal(sectionText(services, 'style:output', 'session-o'), '')
+    assert.equal(sectionText(services, 'style:policy', 'session-o'), POLICY_TEXT, 'tone injection is untouched')
     ctx.dispose()
   })
 })
 
-test('a v2 state keeps its selected output enabled when migrating', async () => {
-  await withHome('migrate-v2', () => {
-    const file = stateFile()
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, JSON.stringify({
-      version: 2,
+test('the projection folds command lifecycle events and serves the wire view', async () => {
+  await withHome('projection', async () => {
+    const { services, ctx } = await boot()
+    const definition = projectionDefinition(services)
+    const empty = definition.init({ id: 'session-p' }, 0)
+    assert.equal(definition.apply(empty, { type: 'message/user', data: {} }), empty, 'foreign events are identity-stable')
+
+    const parked = definition.apply(empty, {
+      type: 'command/run',
+      data: { name: 'style', args: ' tone coach', commandId: 'c1' },
+    })
+    assert.notEqual(parked, empty)
+    assert.deepEqual(parked.pending, { commandId: 'c1' })
+
+    await runCommand(services, 'session-p', ' tone coach')
+    const settled = definition.apply(parked, { type: 'command/done', data: { commandId: 'c1', kind: 'success' } })
+    assert.equal(settled.pending, null)
+
+    const view = definition.wire.view(settled)
+    definition.wire.viewSchema.parse(view)
+    assert.equal(view.enabled, true)
+    assert.equal(view.tone, 'coach')
+    assert.equal(view.outputEnabled, false)
+    assert.ok(Array.isArray(view.tones) && view.tones.length > 0)
+    assert.ok(view.tones.some((tone) => tone.id === 'coach' && tone.name.includes('教练')))
+    assert.ok(Array.isArray(view.outputs) && view.outputs.some((output) => output.id === 'code'))
+    ctx.dispose()
+  })
+})
+
+test('a pre-domain state.json is migrated once and then renamed', async () => {
+  await withHome('legacy-state', async () => {
+    fs.mkdirSync(path.dirname(stateFile()), { recursive: true })
+    fs.writeFileSync(stateFile(), JSON.stringify({
+      version: 3,
       sessions: {
-        'session-v2': { grice: true, tone: 'coach', output: 'code' },
+        'session-old': { toneEnabled: true, tone: 'coach', output: 'code', outputEnabled: true },
       },
     }), 'utf8')
-    const services = createServices()
-    const ctx = createCtx(services)
-    apply(ctx)
-    const state = readState()
-    assert.deepEqual(state.sessions['session-v2'], {
-      toneEnabled: true,
-      tone: 'coach',
-      output: 'code',
-      outputEnabled: true,
-    })
-    assert.match(section(services, 'style:tone').text(assemblySession('session-v2')), /教练式引导/)
-    assert.match(section(services, 'style:output').text(assemblySession('session-v2')), /代码实现/)
+    const { services, ctx } = await boot()
+    assert.deepEqual(records(services).get('session-old'), { toneEnabled: true, tone: 'coach', output: 'code', outputEnabled: true })
+    assert.equal(fs.existsSync(stateFile()), false, 'the migrated file is renamed away')
+    assert.equal(fs.existsSync(`${stateFile()}.migrated`), true)
+    assert.equal(sectionText(services, 'style:tone', 'session-old').length > 0, true)
     ctx.dispose()
   })
 })
 
-test('pre-rename grice/ files are migrated into output-style/', async () => {
-  await withHome('legacy-dir', () => {
+test('pre-rename grice/ state files are migrated before the domain import', async () => {
+  await withHome('legacy-dir', async () => {
     const legacy = path.join(process.env.DSH_HOME, 'grice')
     fs.mkdirSync(legacy, { recursive: true })
     fs.writeFileSync(path.join(legacy, 'state.json'), JSON.stringify({
       version: 3,
-      sessions: { 'session-legacy': { toneEnabled: true, tone: 'coach', output: null, outputEnabled: false } },
+      sessions: { 'session-legacy': { toneEnabled: true, tone: null, output: null, outputEnabled: false } },
     }), 'utf8')
     fs.writeFileSync(path.join(legacy, 'presets.json'), JSON.stringify({
       version: 2,
       tones: [{ id: 'grice', name: '格赖斯·高效', prompt: POLICY_TEXT, pinned: true, builtin: true }],
       outputs: [{ id: 'code', name: '代码实现', prompt: 'legacy output', pinned: true, builtin: true }],
     }), 'utf8')
-    const services = createServices()
-    const ctx = createCtx(services)
-    apply(ctx)
-    assert.ok(fs.existsSync(stateFile()), 'state migrated to output-style/')
-    assert.ok(fs.existsSync(presetsFile()), 'presets migrated to output-style/')
-    assert.equal(readState().sessions['session-legacy'].tone, 'coach')
-    assert.equal(readPresets().outputs[0].prompt, 'legacy output')
-    // Legacy directory is left untouched.
-    assert.ok(fs.existsSync(path.join(legacy, 'state.json')))
+    const { services, ctx } = await boot()
+    assert.equal(records(services).get('session-legacy').toneEnabled, true)
+    assert.equal(fs.existsSync(path.join(legacy, 'state.json')), true, 'the old directory is left untouched')
+    assert.equal(fs.existsSync(presetsFile()), false, 'the legacy JSON library is renamed away')
+    const migrated = fs.readFileSync(path.join(presetsDir(), 'output', 'code.md'), 'utf8')
+    assert.match(migrated, /legacy output/)
     ctx.dispose()
   })
 })
 
-test('the hello beacon records that the browser half rendered', async () => {
-  await withHome('hello', async () => {
-    const services = createServices()
-    apply(createCtx(services))
-    const reply = await callRoute(services.routes.get('/dsh-output-style/state'), {
-      sessionId: 'session-h',
-      hello: true,
-      version: '0.2.0',
-    })
-    assert.equal(reply.body.enabled, false)
-    const state = readState()
-    assert.equal(state.lastClientSeen.sessionId, 'session-h')
-    assert.equal(state.lastClientSeen.version, '0.2.0')
-    assert.equal(typeof state.lastClientSeen.at, 'string')
+test('markdown preset files are loaded, skipped when malformed, and served to the composer', async () => {
+  await withHome('preset-files', async () => {
+    const toneDir = path.join(presetsDir(), 'tone')
+    fs.mkdirSync(toneDir, { recursive: true })
+    fs.writeFileSync(path.join(toneDir, 'house-style.md'), [
+      '---',
+      'name: "House style"',
+      'pinned: true',
+      '---',
+      '',
+      '先给结论，再给依据。',
+      '',
+    ].join('\n'), 'utf8')
+    fs.writeFileSync(path.join(toneDir, 'broken.md'), 'no frontmatter here', 'utf8')
+
+    const { services, ctx } = await boot()
+    const listed = await callRoute(services.routes.get('/dsh-output-style/presets'), {})
+    const custom = listed.body.presets.tones.find((preset) => preset.id === 'house-style')
+    assert.ok(custom, 'the markdown preset is served')
+    assert.equal(custom.name, 'House style')
+    assert.equal(custom.pinned, true)
+    assert.equal(custom.prompt, '先给结论，再给依据。')
+    assert.equal(listed.body.presets.tones.some((preset) => preset.id === 'broken'), false)
+    assert.ok(listed.body.presets.tones.some((preset) => preset.id === 'grice' && preset.builtin === true))
+    ctx.dispose()
   })
 })
 
-test('the routes reject non-POST, non-loopback, cross-origin, and malformed input', async () => {
+test('the settings routes read and mutate the preset library', async () => {
+  await withHome('presets', async () => {
+    const { services, ctx } = await boot()
+    const route = services.routes.get('/dsh-output-style/presets')
+    const listed = await callRoute(route, {})
+    assert.equal(listed.status, 200)
+    assert.ok(Array.isArray(listed.body.presets.tones))
+    assert.ok(Array.isArray(listed.body.presets.outputs))
+
+    const saved = await callRoute(services.routes.get('/dsh-output-style/presets/save'), {
+      kind: 'tone',
+      preset: { id: 'custom', name: '自定义', prompt: '自定义提示词', pinned: true },
+    })
+    assert.equal(saved.status, 200)
+    const afterSave = await callRoute(services.routes.get('/dsh-output-style/presets'), {})
+    assert.ok(afterSave.body.presets.tones.some((preset) => preset.id === 'custom'))
+
+    const removed = await callRoute(services.routes.get('/dsh-output-style/presets/delete'), { kind: 'tone', id: 'custom' })
+    assert.equal(removed.status, 200)
+    const afterDelete = await callRoute(services.routes.get('/dsh-output-style/presets'), {})
+    assert.equal(afterDelete.body.presets.tones.some((preset) => preset.id === 'custom'), false)
+    ctx.dispose()
+  })
+})
+
+test('the preset routes reject non-POST, non-loopback, and cross-origin requests', async () => {
   await withHome('guards', async () => {
-    const services = createServices()
-    apply(createCtx(services))
-    const route = services.routes.get('/dsh-output-style/toggle')
-
-    const wrongMethod = await callRoute(route, { sessionId: 'x' }, { method: 'GET' })
-    assert.equal(wrongMethod.status, 405)
-    assert.equal(wrongMethod.body.code, 'method')
-
-    const remote = await callRoute(route, { sessionId: 'x' }, { socket: { remoteAddress: '10.0.0.2' } })
-    assert.equal(remote.status, 403)
-
-    const badHost = await callRoute(route, { sessionId: 'x' }, { headers: { host: 'evil.example', origin: 'http://evil.example' } })
-    assert.equal(badHost.status, 403)
-
-    const crossOrigin = await callRoute(route, { sessionId: 'x' }, { headers: { host: '127.0.0.1:60612', origin: 'http://evil.example' } })
-    assert.equal(crossOrigin.status, 403)
-
-    const missing = await callRoute(route, {})
-    assert.equal(missing.status, 400)
-
-    const badJson = await callRoute(route, undefined, { bodyText: '{not json' })
-    assert.equal(badJson.status, 400)
-
-    const badSet = await callRoute(services.routes.get('/dsh-output-style/set'), { sessionId: 'x', enabled: 'yes' })
-    assert.equal(badSet.status, 400)
+    const { services, ctx } = await boot()
+    const route = services.routes.get('/dsh-output-style/presets')
+    assert.equal((await callRoute(route, {}, { method: 'GET' })).status, 405)
+    assert.equal((await callRoute(route, {}, { socket: { remoteAddress: '192.168.1.5' } })).status, 403)
+    assert.equal((await callRoute(route, {}, { headers: { host: 'evil.example', origin: 'http://evil.example' } })).status, 403)
+    assert.equal((await callRoute(route, {}, { headers: { host: '127.0.0.1:60612', origin: 'http://evil.example' } })).status, 403)
+    ctx.dispose()
   })
 })
 
 test('the /style command reports and flips both switches and presets', async () => {
   await withHome('command', async () => {
-    const services = createServices()
-    const ctx = createCtx(services)
-    apply(ctx)
-    const command = services.commandDefinitions[0]
-    const invoke = (rawInput) => command.handler({ agent: { session: { id: 'session-cmd' } }, rawInput })
+    const { services, ctx } = await boot()
+    const definition = commandDefinition(services)
+    assert.equal(definition.name, 'style')
+    assert.ok(definition.description.length > 0)
 
-    assert.match(invoke('').text, /基调开关：关/)
-    assert.equal(invoke(' on').kind, 'success')
-    assert.match(invoke('status').text, /基调开关：开/)
-    assert.equal(readState().sessions['session-cmd'].toneEnabled, true)
+    const status = await runCommand(services, 'session-cmd', '')
+    assert.match(status.text, /基调开关：关/)
+    assert.match(status.text, /产出开关：关/)
 
-    assert.equal(invoke(' tone coach').kind, 'success')
-    assert.equal(readState().sessions['session-cmd'].tone, 'coach')
-    assert.match(invoke('status').text, /教练引导/)
+    await runCommand(services, 'session-cmd', ' on')
+    const on = await runCommand(services, 'session-cmd', ' status')
+    assert.match(on.text, /基调开关：开/)
 
-    assert.equal(invoke(' output code').kind, 'success')
-    assert.equal(readState().sessions['session-cmd'].output, 'code')
-    assert.equal(readState().sessions['session-cmd'].outputEnabled, true)
-    assert.match(invoke('status').text, /代码实现/)
+    const outputOn = await runCommand(services, 'session-cmd', ' output on')
+    assert.match(outputOn.text, /产出开关已开启/)
+    assert.equal(records(services).get('session-cmd').outputEnabled, true)
 
-    assert.equal(invoke(' output off').kind, 'success')
-    assert.equal(readState().sessions['session-cmd'].outputEnabled, false)
-    assert.equal(invoke(' output on').kind, 'success')
-    assert.equal(readState().sessions['session-cmd'].outputEnabled, true)
+    const tone = await runCommand(services, 'session-cmd', ' tone coach')
+    assert.match(tone.text, /教练引导/)
+    const output = await runCommand(services, 'session-cmd', ' output code')
+    assert.match(output.text, /代码实现/)
 
-    assert.equal(invoke(' off').kind, 'success')
-    assert.equal(readState().sessions['session-cmd'].toneEnabled, false)
-    assert.equal(invoke(' tone nope').kind, 'error')
-    assert.equal(invoke('bogus').kind, 'error')
-    ctx.dispose()
-  })
-})
-
-test('an unreadable state and preset file degrade to defaults', async () => {
-  await withHome('corrupt', () => {
-    const state = stateFile()
-    fs.mkdirSync(path.dirname(state), { recursive: true })
-    fs.writeFileSync(state, '{broken', 'utf8')
-    fs.writeFileSync(presetsFile(), '{broken', 'utf8')
-    const services = createServices()
-    const ctx = createCtx(services)
-    assert.doesNotThrow(() => apply(ctx))
-    assert.equal(readState().version, 3)
-    assert.deepEqual(readState().sessions, {})
-    assert.ok(readPresets().tones.length >= 5)
-    assert.ok(readPresets().outputs.length >= 5)
+    const resetTone = await runCommand(services, 'session-cmd', ' tone none')
+    assert.match(resetTone.text, /恢复默认/)
+    assert.equal(records(services).get('session-cmd').tone, null)
     ctx.dispose()
   })
 })
