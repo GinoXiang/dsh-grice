@@ -432,6 +432,25 @@ window.__ModuleLoader__.load({
          * @returns the command execution result.
          */
         async command(sessionId, line) {
+          // The retained session face owns the command Remote wrapper; prefer it
+          // so the write needs no separate `remote` service capture.
+          let session
+          try {
+            const binding = sessions === null || sessions === undefined || typeof sessions.binding !== 'function'
+              ? undefined
+              : sessions.binding(sessionId)
+            session = binding === null || binding === undefined ? undefined : binding.session
+          } catch {
+            session = undefined
+          }
+          if (session !== null && typeof session === 'object' && typeof session.command === 'function') {
+            const result = await session.command(line)
+            if (result !== null && typeof result === 'object' && result.ok === false) {
+              const failure = result.error !== null && typeof result.error === 'object' ? result.error : {}
+              throw new Error(String(failure.message || failure.code || 'command failed'))
+            }
+            return result
+          }
           if (remote !== null && remote !== undefined && remote.commands !== undefined && typeof remote.commands.execute === 'function') {
             const result = await remote.commands.execute(sessionId, line, [])
             if (result !== null && typeof result === 'object' && result.ok === false) {
