@@ -122,8 +122,12 @@ test('the bundle registers the merged tone control, the output dropdown, and the
   assert.equal(commandView.options.key, 'style')
   assert.equal(typeof commandView.component, 'function')
   // Switch operations render nothing; the bare/status listing stays visible.
-  assert.equal(commandView.component({ node: { args: ' on', outcome: { kind: 'success', text: '基调开关已开启。' } } }), null)
-  assert.equal(commandView.component({ node: { args: ' tone coach', outcome: { kind: 'success', text: '基调已设为「教练引导」' } } }), null)
+  const hiddenRow = commandView.component({ node: { args: ' on', outcome: { kind: 'success', text: '基调开关已开启。' } } })
+  assert.ok(hiddenRow && Array.isArray(hiddenRow.args), 'switches render a collapse marker')
+  assert.equal(hiddenRow.args[0], 'span')
+  assert.equal(hiddenRow.args[1].className, 'dshstyle-cmdrow-hidden')
+  const hiddenRow2 = commandView.component({ node: { args: ' tone coach', outcome: { kind: 'success', text: '基调已设为「教练引导」' } } })
+  assert.equal(hiddenRow2.args[1].className, 'dshstyle-cmdrow-hidden')
   const listing = commandView.component({ node: { args: '', outcome: { kind: 'success', text: '基调开关：开' } } })
   assert.ok(listing && Array.isArray(listing.args), 'the status listing renders a row')
   assert.equal(commandView.component({ node: { args: ' nope', outcome: { kind: 'error', text: '没有 tone 预设' } } }).args[0], 'div')
@@ -141,7 +145,7 @@ test('the bundle registers the merged tone control, the output dropdown, and the
 
 test('the bundle reads the session projection and keeps only the settings routes', async () => {
   const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('../client.js', import.meta.url), 'utf8'))
-  for (const route of ['/presets', '/presets/save', '/presets/delete', '/presets/reset']) {
+  for (const route of ['/presets', '/presets/save', '/presets/delete', '/presets/reset', '/presets/import']) {
     assert.match(source, new RegExp(`'${route}'`))
   }
   // Session state comes from the host projection, not a polling endpoint.

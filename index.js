@@ -543,6 +543,17 @@ function presetKindDir(kind) {
   return path.join(presetsDir(), kind)
 }
 
+/** Sanitize a caller-supplied preset id into a safe file stem (no separators). */
+function sanitizePresetId(value) {
+  if (typeof value !== 'string') return ''
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+}
+
 function presetFilePath(kind, id) {
   return path.join(presetKindDir(kind), `${id}.md`)
 }
@@ -812,7 +823,7 @@ function createPresetStore(ctx) {
       }
       const library = load()
       const key = PRESET_KEY[kind]
-      const wantedId = typeof input.id === 'string' ? input.id.trim() : ''
+      const wantedId = typeof input.id === 'string' ? sanitizePresetId(input.id) : ''
       const existing = wantedId === '' ? undefined : library[key].find((preset) => preset.id === wantedId)
       let preset
       if (existing !== undefined) {
@@ -834,6 +845,48 @@ function createPresetStore(ctx) {
       reload()
       enforcePinnedCap(kind, preset.id)
       return { list: list(), saved: find(kind, preset.id) ?? preset }
+    },
+    /**
+     * Import presets for one kind from already-parsed JSON entries. A safe
+     * explicit id overwrites the same id; missing ids are generated from the
+     * name. Invalid or over-cap entries are skipped and reported.
+     * @param kind - tone or output.
+     * @param entries - preset objects (`{ id?, name, prompt, pinned? }`).
+     * @returns the saved list plus imported/skipped counts.
+     */
+    importMany(kind, entries) {
+      if (!KINDS.includes(kind)) throw new HttpError(400, 'invalid', 'kind must be tone or output')
+      if (!Array.isArray(entries) || entries.length === 0) {
+        throw new HttpError(400, 'invalid', 'presets must be a non-empty array')
+      }
+      let imported = 0
+      const skipped = []
+      for (const entry of entries.slice(0, MAX_PRESETS_PER_KIND)) {
+        if (entry === null || typeof entry !== 'object') {
+          skipped.push('invalid')
+          continue
+        }
+        const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+        const prompt = typeof entry.prompt === 'string' ? entry.prompt : ''
+        if (name === '' || name.length > MAX_PRESET_NAME_LENGTH || prompt.length > MAX_PRESET_PROMPT_LENGTH) {
+          skipped.push(name === '' ? 'invalid' : name)
+          continue
+        }
+        const library = load()
+        const key = PRESET_KEY[kind]
+        const wantedId = sanitizePresetId(entry.id)
+        const existing = wantedId === '' ? undefined : library[key].find((preset) => preset.id === wantedId)
+        if (existing === undefined && library[key].length >= MAX_PRESETS_PER_KIND) {
+          skipped.push(name)
+          continue
+        }
+        const id = existing !== undefined ? existing.id : (wantedId === '' ? makeId(library, kind, name) : wantedId)
+        writePresetFile(kind, { id, name, prompt, pinned: entry.pinned === true, builtin: false })
+        imported += 1
+      }
+      reload()
+      if (imported > 0) enforcePinnedCap(kind)
+      return { list: list(), imported, skipped }
     },
     /** Delete one preset file; returns the saved list. */
     remove(kind, id) {
@@ -1066,6 +1119,14 @@ function registerRoutes(webServer, fiber, presets) {
       const id = typeof body.id === 'string' ? body.id : ''
       if (id === '') throw new HttpError(400, 'invalid', 'id required')
       return { ...presets.remove(kind, id), kind }
+    }),
+  }))
+  fiber.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/presets/import`,
+    handler: routeHandler(async (body) => {
+      const kind = requireKind(body)
+      return { ...presets.importMany(kind, body.presets), kind }
     }),
   }))
   fiber.effect(() => webServer.register({

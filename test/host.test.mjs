@@ -238,6 +238,7 @@ test('the host declares the storage domain and registers the projection and sect
     assert.deepEqual([...services.routes.keys()].sort(), [
       '/dsh-output-style/presets',
       '/dsh-output-style/presets/delete',
+      '/dsh-output-style/presets/import',
       '/dsh-output-style/presets/reset',
       '/dsh-output-style/presets/save',
     ])
@@ -408,6 +409,43 @@ test('markdown preset files are loaded, skipped when malformed, and served to th
     assert.equal(custom.prompt, '先给结论，再给依据。')
     assert.equal(listed.body.presets.tones.some((preset) => preset.id === 'broken'), false)
     assert.ok(listed.body.presets.tones.some((preset) => preset.id === 'grice' && preset.builtin === true))
+    ctx.dispose()
+  })
+})
+
+test('the import route writes JSON presets into the markdown library', async () => {
+  await withHome('preset-import', async () => {
+    const { services, ctx } = await boot()
+    const route = services.routes.get('/dsh-output-style/presets/import')
+    assert.ok(route, 'the import route is registered')
+
+    const imported = await callRoute(route, {
+      kind: 'tone',
+      presets: [
+        { id: 'imported-tone', name: '导入基调', prompt: '导入的提示词', pinned: true },
+        { name: '无名 id', prompt: '自动生成 id' },
+        { name: '', prompt: 'invalid' },
+      ],
+    })
+    assert.equal(imported.status, 200)
+    assert.equal(imported.body.imported, 2)
+    assert.equal(imported.body.skipped.length, 1)
+    assert.ok(fs.existsSync(path.join(presetsDir(), 'tone', 'imported-tone.md')))
+    assert.ok(imported.body.list.tones.some((preset) => preset.id === 'imported-tone' && preset.name === '导入基调'))
+
+    // A path-looking id is sanitized into a safe file stem.
+    const sanitized = await callRoute(route, {
+      kind: 'output',
+      presets: [{ id: '../escape', name: '逃逸', prompt: 'x' }],
+    })
+    assert.equal(sanitized.status, 200)
+    assert.equal(sanitized.body.imported, 1)
+    assert.ok(fs.existsSync(path.join(presetsDir(), 'output', 'escape.md')))
+    assert.equal(sanitized.body.list.outputs.some((preset) => preset.id === 'escape'), true)
+
+    // Malformed payloads are rejected without writing.
+    const empty = await callRoute(route, { kind: 'tone', presets: [] })
+    assert.equal(empty.status, 400)
     ctx.dispose()
   })
 })

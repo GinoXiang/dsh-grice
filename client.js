@@ -84,6 +84,10 @@ window.__ModuleLoader__.load({
       empty: '还没有预设，点「新增」创建一个。',
       saved: '已保存',
       builtinNote: '内置预设也可以修改或删除，恢复默认会还原。',
+      importPresets: '导入配置',
+      importHint: '选择 JSON 配置文件（数组、单个对象或包含 presets 的对象）',
+      importBad: '文件里没有可导入的预设',
+      importDone: (count) => `已导入 ${count} 条预设`,
       close: '关闭',
     }
 
@@ -139,6 +143,10 @@ window.__ModuleLoader__.load({
       empty: 'No presets yet — click New to create one.',
       saved: 'Saved',
       builtinNote: 'Built-in presets can be edited or deleted; Restore defaults brings them back.',
+      importPresets: 'Import config',
+      importHint: 'Pick a JSON config (array, single object, or an object with presets)',
+      importBad: 'The file holds no importable presets',
+      importDone: (count) => `Imported ${count} preset(s)`,
       close: 'Close',
     }
 
@@ -177,6 +185,10 @@ window.__ModuleLoader__.load({
       '.dshstyle-cmdrow-prompt{flex:none;opacity:.7}',
       '.dshstyle-cmdrow-text{white-space:pre-wrap;word-break:break-word}',
       '.dshstyle-cmdrow-text[data-error="1"]{color:var(--dsw-alias-state-error-primary,#d03050)}',
+      '.dshstyle-cmdrow-hidden{display:none}',
+      // The command row wrapper is core markup without our classes; :has() lets the
+      // marker collapse its whole flow item so a quiet switch leaves no blank row.
+      '[data-chat-flow-kind="command"]:has(.dshstyle-cmdrow-hidden){display:none!important}',
       '.dshstyle-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
       '.dshstyle-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
       '.dshstyle-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
@@ -938,6 +950,17 @@ window.__ModuleLoader__.load({
           menu,
         ])
       }
+      /** Extract preset entries from a JSON import payload for one kind. */
+      function importEntries(parsed, kind) {
+        if (Array.isArray(parsed)) return parsed
+        if (parsed === null || typeof parsed !== 'object') return []
+        const key = kind === 'tone' ? 'tones' : 'outputs'
+        if (Array.isArray(parsed[key])) return parsed[key]
+        if (Array.isArray(parsed.presets)) return parsed.presets
+        if (typeof parsed.name === 'string' && typeof parsed.prompt === 'string') return [parsed]
+        return []
+      }
+
       function SettingsPanel() {
         const t = useDictionary()
         const presets = usePresets()
@@ -946,6 +969,8 @@ window.__ModuleLoader__.load({
         const [notice, setNotice] = React.useState(null)
         const [failure, setFailure] = React.useState(null)
         const [busy, setBusy] = React.useState(false)
+        const [importing, setImporting] = React.useState(false)
+        const fileRef = React.useRef(null)
 
         const library = tab === 'tone' ? presets.tones : presets.outputs
 
@@ -1029,6 +1054,52 @@ window.__ModuleLoader__.load({
           })
         }
 
+        const startImport = () => {
+          if (busy || importing) return
+          setNotice(null)
+          setFailure(null)
+          setImporting(true)
+          if (fileRef.current !== null) {
+            fileRef.current.value = ''
+            fileRef.current.click()
+          }
+        }
+
+        const importFile = (event) => {
+          const file = event !== null && event.target !== null && event.target.files !== undefined ? event.target.files[0] : undefined
+          if (file === undefined || file === null) {
+            setImporting(false)
+            return
+          }
+          setBusy(true)
+          setFailure(null)
+          Promise.resolve()
+            .then(() => (typeof file.text === 'function' ? file.text() : Promise.reject(new Error(t.importBad))))
+            .then((source) => {
+              let parsed
+              try {
+                parsed = JSON.parse(source)
+              } catch {
+                throw new Error(t.importBad)
+              }
+              const entries = importEntries(parsed, tab)
+              if (entries.length === 0) throw new Error(t.importBad)
+              return post('/presets/import', { kind: tab, presets: entries })
+            })
+            .then((data) => {
+              presetStore.replace(data.list)
+              if (data.imported > 0) setNotice(t.importDone(data.imported))
+              else throw new Error(t.importBad)
+            })
+            .catch((error) => {
+              setFailure(String((error && error.message) || error))
+            })
+            .then(() => {
+              setBusy(false)
+              setImporting(false)
+            })
+        }
+
         const rows = library.map((preset) => h('div', { key: preset.id, className: 'dshstyle-row' }, [
           h('div', { key: 'main', className: 'dshstyle-row-main' }, [
             h('div', { key: 'name', className: 'dshstyle-row-name' }, [
@@ -1102,6 +1173,14 @@ window.__ModuleLoader__.load({
               key: 'add', type: 'button', className: 'dshstyle-btn', 'data-primary': '1', disabled: busy,
               onClick: startAdd,
             }, tab === 'tone' ? t.addTone : t.addOutput),
+            h('input', {
+              key: 'file', ref: fileRef, type: 'file', accept: 'application/json,.json', style: { display: 'none' },
+              onChange: importFile,
+            }),
+            h('button', {
+              key: 'import', type: 'button', className: 'dshstyle-btn', disabled: busy || importing,
+              onClick: startImport, title: t.importHint,
+            }, t.importPresets),
             h('span', { key: 'spacer', className: 'dshstyle-spacer' }),
             notice === null ? null : h('span', { key: 'notice', className: 'dshstyle-notice' }, notice),
             failure === null || editing !== null ? null : h('span', { key: 'error', className: 'dshstyle-error' }, failure),
@@ -1136,7 +1215,7 @@ window.__ModuleLoader__.load({
         const node = props !== null && typeof props === 'object' ? props.node : undefined
         if (node === null || typeof node !== 'object') return null
         const args = typeof node.args === 'string' ? node.args.trim() : ''
-        if (isSwitchArgument(args)) return null
+        if (isSwitchArgument(args)) return h('span', { key: 'hidden', className: 'dshstyle-cmdrow-hidden', 'aria-hidden': 'true' })
         const outcome = node.outcome
         if (outcome === null || outcome === undefined || typeof outcome !== 'object') return null
         const text = typeof outcome.text === 'string' ? outcome.text : ''
