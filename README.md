@@ -60,6 +60,7 @@ style:output   (order 660)  ← 产出开关开、且选了产出形态时注入
   - `/style output on` / `/style output off` — 产出开关
   - `/style tone <id>`、`/style output <id>`；`/style tone none`、`/style output none` 恢复默认
 - 内置 id：基调 `grice` `coach` `audit` `creative` `minimal` `socratic` `balanced`；产出 `code` `analysis` `doc` `translate` `summary` `tutorial` `options`。
+- **按钮切换不刷屏**：输入框里的开关/选预设走 `/style` 命令，但命令行由本插件接管（keyed `conversation.chat.commandview`），切换类命令在对话流里**不显示**；只有显式输入 `/style`、`/style status` 的列表和错误仍会显示。
 
 ## 安装
 

@@ -171,6 +171,12 @@ window.__ModuleLoader__.load({
       // Narrow composer: keep both controls on one toolbar row by showing one
       // character of the preset name instead of wrapping the row.
       '@container (width <= 560px){.dshstyle-split-main .dshstyle-label{max-width:1em;text-overflow:clip}.dshstyle-split-main{gap:4px;padding-right:2px}}',
+      // The `/style` command row: hidden for switch operations, visible for
+      // status/errors so the quiet buttons never spam the transcript.
+      '.dshstyle-cmdrow{display:flex;align-items:flex-start;gap:8px;padding:2px 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      '.dshstyle-cmdrow-prompt{flex:none;opacity:.7}',
+      '.dshstyle-cmdrow-text{white-space:pre-wrap;word-break:break-word}',
+      '.dshstyle-cmdrow-text[data-error="1"]{color:var(--dsw-alias-state-error-primary,#d03050)}',
       '.dshstyle-menu-more-btn{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;padding:0 2px;cursor:pointer}',
       '.dshstyle-menu-more-btn:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}',
       '.dshstyle-menu-more-row{display:block;width:100%;padding:6px 10px;border-radius:var(--dsw-radius-sm);font-size:12px;text-align:left}',
@@ -1113,6 +1119,38 @@ window.__ModuleLoader__.load({
         ])
       }
 
+      /** Switch arguments are the quiet operations; a bare invocation stays visible. */
+      function isSwitchArgument(argument) {
+        if (argument === '') return false
+        if (/^(on|off|开|关)$/.test(argument)) return true
+        if (/^output\s+(on|off|开|关)$/.test(argument)) return true
+        return /^(tone|output)\s+\S+$/.test(argument)
+      }
+
+      /**
+       * Renderer for the `/style` command row (keyed slot by command name).
+       * Button-driven switches are silent; `/style` or `/style status` keeps its
+       * listing, and errors stay visible.
+       */
+      function StyleCommandRow(props) {
+        const node = props !== null && typeof props === 'object' ? props.node : undefined
+        if (node === null || typeof node !== 'object') return null
+        const args = typeof node.args === 'string' ? node.args.trim() : ''
+        if (isSwitchArgument(args)) return null
+        const outcome = node.outcome
+        if (outcome === null || outcome === undefined || typeof outcome !== 'object') return null
+        const text = typeof outcome.text === 'string' ? outcome.text : ''
+        if (text === '') return null
+        return h('div', { className: 'dshstyle-cmdrow' }, [
+          h('span', { key: 'prompt', className: 'dshstyle-cmdrow-prompt' }, '>'),
+          h('span', {
+            key: 'text',
+            className: 'dshstyle-cmdrow-text',
+            'data-error': outcome.kind === 'error' ? '1' : undefined,
+          }, text),
+        ])
+      }
+
       ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
         name: 'conversation.input.left',
         id: 'dsh-output-style',
@@ -1131,6 +1169,16 @@ window.__ModuleLoader__.load({
         order: 120,
         label: () => dictionary().panel,
       }, SettingsPanel))
+
+      // `/style` command rows are keyed by command name: take over `style` so
+      // switch operations (the composer buttons and their keyboard equivalent)
+      // render nothing, while status/error listings stay visible.
+      ctx.slots.inject('conversation.chat.commandview', () => ctx.slots.register({
+        name: 'conversation.chat.commandview',
+        id: 'dsh-output-style-command',
+        key: 'style',
+        order: 120,
+      }, StyleCommandRow))
     }
 
     return { name: 'dsh-output-style', inject, apply }

@@ -108,8 +108,8 @@ test('the bundle registers the merged tone control, the output dropdown, and the
   const ctx = fakeCtx()
   plugin.apply(ctx)
 
-  assert.deepEqual(ctx.injected, ['conversation.input.left', 'conversation.input.left', 'settings.section'])
-  assert.equal(ctx.registered.length, 3)
+  assert.deepEqual(ctx.injected, ['conversation.input.left', 'conversation.input.left', 'settings.section', 'conversation.chat.commandview'])
+  assert.equal(ctx.registered.length, 4)
 
   const composer = ctx.registered.filter((entry) => entry.options.name === 'conversation.input.left')
   assert.equal(composer.length, 2)
@@ -117,6 +117,16 @@ test('the bundle registers the merged tone control, the output dropdown, and the
   assert.equal(composer[0].options.order, 120)
   assert.equal(composer[1].options.id, 'dsh-output-style-output')
   assert.equal(composer[1].options.order, 140)
+  const commandView = ctx.registered.find((entry) => entry.options.name === 'conversation.chat.commandview')
+  assert.ok(commandView, 'the /style command row is claimed from the keyed commandview slot')
+  assert.equal(commandView.options.key, 'style')
+  assert.equal(typeof commandView.component, 'function')
+  // Switch operations render nothing; the bare/status listing stays visible.
+  assert.equal(commandView.component({ node: { args: ' on', outcome: { kind: 'success', text: '基调开关已开启。' } } }), null)
+  assert.equal(commandView.component({ node: { args: ' tone coach', outcome: { kind: 'success', text: '基调已设为「教练引导」' } } }), null)
+  const listing = commandView.component({ node: { args: '', outcome: { kind: 'success', text: '基调开关：开' } } })
+  assert.ok(listing && Array.isArray(listing.args), 'the status listing renders a row')
+  assert.equal(commandView.component({ node: { args: ' nope', outcome: { kind: 'error', text: '没有 tone 预设' } } }).args[0], 'div')
   const settings = ctx.registered.find((entry) => entry.options.name === 'settings.section').options
   assert.equal(settings.id, 'dsh-output-style')
   assert.equal(typeof settings.label, 'function')
